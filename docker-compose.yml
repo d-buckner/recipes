@@ -1,0 +1,16 @@
+services:
+  recipes:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - recipes_data:/data
+    environment:
+      RECIPES_DB_PATH: /data/recipes.db
+      RECIPES_SITES: ""
+      RECIPES_RATE_LIMIT_DELAY: "2"
+      RECIPES_MAX_WORKERS: "1"
+    restart: unless-stopped
+
+volumes:
+  recipes_data:
