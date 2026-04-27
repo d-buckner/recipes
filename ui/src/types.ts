@@ -14,6 +14,7 @@ export interface SearchResult {
   total_time: number | null
   yields: string | null
   image: string | null
+  has_thumbnail: boolean
   is_favorite: boolean
   collections: string[]
 }
@@ -48,6 +49,7 @@ export interface ScrapeRunStats {
   processing: number
   complete: number
   failed: number
+  unavailable: number
   favorites: number
 }
 

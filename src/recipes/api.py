@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from . import db, discovery, scraper
@@ -95,6 +96,18 @@ def get_recipe(recipe_id: int) -> RecipeResponse:
         site=recipe.site,
         status=recipe.status.value,
         recipe_json=recipe.recipe_json,
+    )
+
+
+@app.get("/recipes/{recipe_id}/thumbnail")
+def get_thumbnail(recipe_id: int) -> Response:
+    data = db.get_thumbnail(recipe_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "max-age=31536000, immutable"},
     )
 
 

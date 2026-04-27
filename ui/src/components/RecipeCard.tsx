@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import type { SearchResult } from '../types'
 import { CollectionPicker } from './CollectionPicker'
@@ -16,9 +17,17 @@ function formatTime(minutes: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
 
+const FADE_IN_STYLE: CSSProperties = { opacity: 0, transition: 'opacity 0.3s ease' }
+const FADE_IN_LOADED_STYLE: CSSProperties = { opacity: 1, transition: 'opacity 0.3s ease' }
+
 export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCardProps) {
   const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null)
+  const [imgLoaded, setImgLoaded] = useState(false)
   const folderBtnRef = useRef<HTMLButtonElement>(null)
+
+  const imageSrc = recipe.has_thumbnail
+    ? `/api/recipes/${recipe.id}/thumbnail`
+    : recipe.image
 
   const handleFavoriteClick = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -43,12 +52,14 @@ export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCar
         to={`/recipe/${recipe.site}/${recipe.id}`}
         className="recipe-card"
       >
-        <div className={`card-image-wrap${recipe.image ? '' : ' no-image'}`}>
-          {recipe.image ? (
+        <div className={`card-image-wrap${imageSrc ? '' : ' no-image'}`}>
+          {imageSrc ? (
             <img
-              src={recipe.image}
+              src={imageSrc}
               alt={recipe.title}
               loading="lazy"
+              style={imgLoaded ? FADE_IN_LOADED_STYLE : FADE_IN_STYLE}
+              onLoad={() => setImgLoaded(true)}
               onError={(e) => {
                 const img = e.target as HTMLImageElement
                 img.style.display = 'none'

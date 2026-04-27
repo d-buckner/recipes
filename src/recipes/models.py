@@ -44,6 +44,7 @@ class SearchResult:
     yields: str | None
     image: str | None
     is_favorite: bool = False
+    has_thumbnail: bool = False
     collections: list[str] = field(default_factory=list)
 
 

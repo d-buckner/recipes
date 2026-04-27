@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS collection_recipes (
 _MIGRATIONS = [
     "ALTER TABLE recipes ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE recipes ADD COLUMN claimed_at TEXT",
+    "ALTER TABLE recipes ADD COLUMN thumbnail BLOB",
 ]
 
 
@@ -189,7 +190,7 @@ def claim_next_url(claim_timeout: int = 300) -> RecipeRow | None:
         return _row_to_recipe(row)
 
 
-def save_recipe(recipe_id: int, recipe_json: dict) -> None:
+def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = None) -> None:
     title = recipe_json.get("title", "")
     description = recipe_json.get("description", "") or ""
     ingredients = " ".join(recipe_json.get("ingredients", []) or [])
@@ -199,15 +200,25 @@ def save_recipe(recipe_id: int, recipe_json: dict) -> None:
         conn.execute(
             """
             UPDATE recipes
-            SET status = 'complete', recipe_json = ?, updated_at = datetime('now')
+            SET status = 'complete', recipe_json = ?, thumbnail = ?, updated_at = datetime('now')
             WHERE id = ?
             """,
-            (json.dumps(recipe_json), recipe_id),
+            (json.dumps(recipe_json), thumbnail, recipe_id),
         )
         conn.execute(
             "INSERT OR REPLACE INTO recipe_fts (id, title, description, ingredients, keywords) VALUES (?, ?, ?, ?, ?)",
             (recipe_id, title, description, ingredients, keywords),
         )
+
+
+def get_thumbnail(recipe_id: int) -> bytes | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT thumbnail FROM recipes WHERE id = ?", (recipe_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return row["thumbnail"]
 
 
 def mark_unavailable(recipe_id: int, error_msg: str) -> None:
@@ -262,6 +273,7 @@ def search_recipes(query: str, limit: int = 20, offset: int = 0) -> list[SearchR
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                    COALESCE(
                      (SELECT GROUP_CONCAT(c.name, '||')
@@ -312,6 +324,7 @@ def list_favorites() -> list[SearchResult]:
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    1 AS is_favorite,
                    COALESCE(
                      (SELECT GROUP_CONCAT(c.name, '||')
@@ -364,6 +377,7 @@ def list_recipes(limit: int = 20, offset: int = 0) -> list[SearchResult]:
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                    COALESCE(
                      (SELECT GROUP_CONCAT(c.name, '||')
@@ -456,6 +470,7 @@ def list_collection_recipes(collection_id: int, limit: int = 20, offset: int = 0
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                    COALESCE(
                      (SELECT GROUP_CONCAT(c2.name, '||')
@@ -504,5 +519,6 @@ def _row_to_search_result(row: sqlite3.Row) -> SearchResult:
         yields=row["yields"],
         image=row["image"],
         is_favorite=bool(row["is_favorite"]),
+        has_thumbnail=bool(row["has_thumbnail"]),
         collections=collections,
     )
