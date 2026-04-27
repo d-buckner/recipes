@@ -32,10 +32,12 @@ packages = ["src/recipes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["e2e: end-to-end tests (slow, require live network)"]
 
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "playwright>=1.44",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "responses>=0.26.0",

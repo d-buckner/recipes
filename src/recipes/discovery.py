@@ -4,14 +4,17 @@ import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
 import requests
+from recipe_scrapers._exceptions import NoSchemaFoundInWildMode, RecipeSchemaNotFound
 from usp.tree import sitemap_tree_for_homepage
 
 from . import db
 from .config import settings
+from .scraper import fetch_html, parse_recipe
 
 log = logging.getLogger(__name__)
 
 _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
+_PROBE_SAMPLE = 3  # URLs to try per sitemap when probing
 
 
 def _collect_leaf_sitemaps(node) -> list:
@@ -59,13 +62,49 @@ def discover_from_sitemap_url(sitemap_url: str, hostname: str | None = None) -> 
     return inserted
 
 
+def _is_valid_recipe(data: dict) -> bool:
+    """A real recipe must have a title and at least ingredients or instructions."""
+    return bool(data.get("title")) and bool(data.get("ingredients") or data.get("instructions"))
+
+
+def _probe_has_recipes(sitemap, sample_size: int = _PROBE_SAMPLE) -> bool:
+    """
+    Sample up to sample_size URLs from a sitemap and attempt to parse each as a
+    recipe with meaningful content. Returns True as soon as one passes.
+
+    Handles three failure modes:
+    - parse_recipe raises NoSchemaFound*: page has no recipe markup
+    - parse_recipe returns empty fields: page parsed but has no real recipe data
+      (e.g. a collection or tag page)
+    - network/other errors: skip and try the next URL
+    """
+    count = 0
+    for page in sitemap.all_pages():
+        if not page.url or count >= sample_size:
+            break
+        count += 1
+        try:
+            html = fetch_html(page.url)
+            data = parse_recipe(html, page.url)
+            if _is_valid_recipe(data):
+                log.info("  probe hit: %s", page.url)
+                return True
+            log.debug("  probe miss (empty fields): %s", page.url)
+        except (NoSchemaFoundInWildMode, RecipeSchemaNotFound):
+            log.debug("  probe miss (no schema): %s", page.url)
+        except Exception as exc:
+            log.debug("  probe error (%s): %s", type(exc).__name__, page.url)
+    return False
+
+
 def discover_site(site_url: str, url_filter: str | None = None) -> int:
     """
     Crawl sitemaps for a site via robots.txt, filter recipe URLs, insert into db.
 
-    usp reads robots.txt automatically and follows the sitemap tree. If any leaf
-    sitemaps have "recipe" in their URL they are preferred; otherwise all leaves
-    are searched and the URL filter pattern is the primary gate.
+    usp reads robots.txt automatically and follows the sitemap tree. Each leaf
+    sitemap is probed by fetching a small sample of its URLs and attempting to
+    parse them as recipes. Only sitemaps that contain at least one parseable
+    recipe are used. Falls back to all leaf sitemaps if the probe finds none.
 
     Returns the number of new URLs discovered.
     """
@@ -80,12 +119,13 @@ def discover_site(site_url: str, url_filter: str | None = None) -> int:
     for s in leaf_sitemaps:
         log.debug("  sitemap: %s", s.url)
 
-    # Prefer recipe-specific sub-sitemaps when the site names them explicitly
-    recipe_leaves = [s for s in leaf_sitemaps if re.search(r"recipe", s.url or "", re.IGNORECASE)]
-    if recipe_leaves:
-        log.info("Using %d recipe-specific sitemap(s)", len(recipe_leaves))
-        selected = recipe_leaves
+    # Probe each sitemap to find the ones that actually contain recipes
+    confirmed = [s for s in leaf_sitemaps if _probe_has_recipes(s)]
+    if confirmed:
+        log.info("Using %d recipe sitemap(s) (confirmed by probe)", len(confirmed))
+        selected = confirmed
     else:
+        log.warning("Probe found no recipe sitemaps, falling back to all with URL filter")
         selected = leaf_sitemaps
 
     urls: list[tuple[str, str]] = []
