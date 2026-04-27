@@ -73,17 +73,25 @@ def search_recipes(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    author: str | None = Query(default=None),
+    cuisine: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    site: str | None = Query(default=None),
 ) -> list[SearchResult]:
     safe_query = sanitize_fts_query(q)
-    return db.search_recipes(safe_query, limit=limit, offset=offset)
+    return db.search_recipes(safe_query, limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site)
 
 
 @app.get("/recipes", response_model=list[SearchResult])
 def list_recipes(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    author: str | None = Query(default=None),
+    cuisine: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    site: str | None = Query(default=None),
 ) -> list[SearchResult]:
-    return db.list_recipes(limit=limit, offset=offset)
+    return db.list_recipes(limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site)
 
 
 @app.get("/recipes/{recipe_id}", response_model=RecipeResponse)
@@ -136,6 +144,11 @@ def list_favorites() -> list[SearchResult]:
 @app.get("/stats", response_model=ScrapeRunStats)
 def get_stats() -> ScrapeRunStats:
     return db.get_stats()
+
+
+@app.get("/filters")
+def get_filter_options() -> dict:
+    return db.list_filter_options()
 
 
 @app.get("/sites", response_model=list[str])

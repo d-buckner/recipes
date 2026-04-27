@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
-import type { SearchResult } from '../types'
+import type { ActiveFilters, SearchResult, TagFilter, TagFilterType } from '../types'
 
 interface RecipeCardProps {
   recipe: SearchResult
   onFavorite: (id: number, isFavorite: boolean) => void
   onRemoveFromCollection?: (id: number) => void
+  onTagFilter?: (filter: TagFilter) => void
+  activeFilters?: ActiveFilters
 }
 
 function formatTime(minutes: number): string {
@@ -19,8 +21,15 @@ function formatTime(minutes: number): string {
 const FADE_IN_STYLE: CSSProperties = { opacity: 0, transition: 'opacity 0.3s ease' }
 const FADE_IN_LOADED_STYLE: CSSProperties = { opacity: 1, transition: 'opacity 0.3s ease' }
 
-export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection }: RecipeCardProps) {
+export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection, onTagFilter, activeFilters }: RecipeCardProps) {
   const [imgLoaded, setImgLoaded] = useState(false)
+
+  const handleTagClick = (type: TagFilterType, value: string) => (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onTagFilter?.({ type, value })
+  }
+
 
   const imageSrc = recipe.has_thumbnail
     ? `/api/recipes/${recipe.id}/thumbnail`
@@ -34,7 +43,7 @@ export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection }: Recip
 
   return (
     <Link
-        to={`/recipe/${recipe.site}/${recipe.id}`}
+        to={`/recipe/${recipe.id}`}
         className="recipe-card"
       >
         <div className={`card-image-wrap${imageSrc ? '' : ' no-image'}`}>
@@ -72,7 +81,6 @@ export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection }: Recip
         <div className="card-body">
           <div className="card-title">{recipe.title || 'Untitled Recipe'}</div>
           <div className="card-meta">
-            <span className="card-site">{recipe.site}</span>
             {recipe.total_time != null && recipe.total_time > 0 && (
               <span className="card-time">⏱ {formatTime(recipe.total_time)}</span>
             )}
@@ -80,6 +88,30 @@ export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection }: Recip
               <span className="card-time">🍽 {recipe.yields}</span>
             )}
           </div>
+          {(() => {
+            const hideSite = !!activeFilters?.site
+            const contentTags: { type: TagFilterType; value: string; label: string }[] = [
+              ...recipe.categories.map((v) => ({ type: 'category' as TagFilterType, value: v, label: `📂 ${v}` })),
+              ...recipe.cuisines.map((v) => ({ type: 'cuisine' as TagFilterType, value: v, label: `🗺 ${v}` })),
+              ...(recipe.author ? [{ type: 'author' as TagFilterType, value: recipe.author, label: `👤 ${recipe.author}` }] : []),
+            ].filter((tag) => activeFilters?.[tag.type] !== tag.value)
+            const visibleTags = contentTags.slice(0, 2)
+            if (hideSite && visibleTags.length === 0) return null
+            return (
+              <div className="card-tags">
+                {!hideSite && (
+                  <button className="card-tag card-tag--site" onClick={handleTagClick('site', recipe.site)}>
+                    {recipe.site_name}
+                  </button>
+                )}
+                {visibleTags.map((tag) => (
+                  <button key={tag.value} className="card-tag" onClick={handleTagClick(tag.type, tag.value)}>
+                    {tag.label}
+                  </button>
+                ))}
+              </div>
+            )
+          })()}
           {recipe.collections.length > 0 && (
             <div className="card-collections">
               {recipe.collections.map((name) => (

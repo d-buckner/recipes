@@ -4,6 +4,10 @@ import { addFavorite, getRecipe, listCollections, removeFavorite, removeRecipeFr
 import { CollectionPicker } from '../components/CollectionPicker'
 import type { Collection, RecipeDetail } from '../types'
 
+interface RecipePageParams extends Record<string, string | undefined> {
+  id: string
+}
+
 function formatTime(minutes: number): string {
   if (minutes < 60) return `${minutes} min`
   const h = Math.floor(minutes / 60)
@@ -12,7 +16,7 @@ function formatTime(minutes: number): string {
 }
 
 export function RecipePage() {
-  const { id } = useParams<{ site: string; id: string }>()
+  const { id } = useParams<RecipePageParams>()
   const navigate = useNavigate()
   const [recipe, setRecipe] = useState<RecipeDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -115,9 +119,15 @@ export function RecipePage() {
             <span className="pill">⏱ {formatTime(rj.total_time)}</span>
           )}
           {rj.yields && <span className="pill">🍽 {rj.yields}</span>}
-          {rj.cuisine && <span className="pill">🗺 {rj.cuisine}</span>}
-          {rj.category && <span className="pill">📂 {rj.category}</span>}
-          {rj.author && <span className="pill">👤 {rj.author}</span>}
+          {rj.cuisine?.map((c) => (
+            <Link key={c} to={`/?cuisine=${encodeURIComponent(c)}`} className="pill pill-filter">🗺 {c}</Link>
+          ))}
+          {rj.category?.map((c) => (
+            <Link key={c} to={`/?category=${encodeURIComponent(c)}`} className="pill pill-filter">📂 {c}</Link>
+          ))}
+          {rj.author && (
+            <Link to={`/?author=${encodeURIComponent(rj.author)}`} className="pill pill-filter">👤 {rj.author}</Link>
+          )}
         </div>
 
         <div className="recipe-page-actions">

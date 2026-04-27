@@ -1,15 +1,26 @@
-import type { Collection, DiscoverResponse, RecipeDetail, ScrapeRunStats, SearchResult } from './types'
+import type { ActiveFilters, Collection, DiscoverResponse, FilterOptions, RecipeDetail, ScrapeRunStats, SearchResult } from './types'
 
 const BASE = '/api'
 
-export async function listRecipes(limit = 20, offset = 0): Promise<SearchResult[]> {
-  const res = await fetch(`${BASE}/recipes?limit=${limit}&offset=${offset}`)
+function applyFilters(params: URLSearchParams, filters?: ActiveFilters): void {
+  if (!filters) return
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value)
+  }
+}
+
+export async function listRecipes(limit = 20, offset = 0, filters?: ActiveFilters): Promise<SearchResult[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  applyFilters(params, filters)
+  const res = await fetch(`${BASE}/recipes?${params}`)
   if (!res.ok) throw new Error('Failed to fetch recipes')
   return res.json() as Promise<SearchResult[]>
 }
 
-export async function searchRecipes(q: string, limit = 20, offset = 0): Promise<SearchResult[]> {
-  const res = await fetch(`${BASE}/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`)
+export async function searchRecipes(q: string, limit = 20, offset = 0, filters?: ActiveFilters): Promise<SearchResult[]> {
+  const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset) })
+  applyFilters(params, filters)
+  const res = await fetch(`${BASE}/search?${params}`)
   if (!res.ok) throw new Error('Search failed')
   return res.json() as Promise<SearchResult[]>
 }
@@ -38,6 +49,12 @@ export async function getStats(): Promise<ScrapeRunStats> {
   const res = await fetch(`${BASE}/stats`)
   if (!res.ok) throw new Error('Failed to fetch stats')
   return res.json() as Promise<ScrapeRunStats>
+}
+
+export async function getFilterOptions(): Promise<FilterOptions> {
+  const res = await fetch(`${BASE}/filters`)
+  if (!res.ok) throw new Error('Failed to fetch filter options')
+  return res.json() as Promise<FilterOptions>
 }
 
 export async function getSites(): Promise<string[]> {

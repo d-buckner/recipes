@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useUrlFilters } from '../hooks/useUrlFilters'
 import {
   addFavorite,
   createCollection,
   deleteCollection,
+  discoverSite,
   getFavorites,
   getStats,
   listCollectionRecipes,
@@ -11,17 +13,31 @@ import {
   removeFavorite,
   removeRecipeFromCollection,
   searchRecipes,
+  startScrape,
 } from '../api'
 
 import { AddSiteDropdown } from '../components/AddSiteDropdown'
+import { FilterPanel } from '../components/FilterPanel'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
-import { StatsBar } from '../components/StatsBar'
-import type { Collection, SearchResult, ScrapeRunStats } from '../types'
+import type { Collection, SearchResult, ScrapeRunStats, TagFilter, TagFilterType } from '../types'
+
+type ToastState =
+  | { status: 'pending'; site: string }
+  | { status: 'done'; site: string; discovered: number }
+  | { status: 'error'; site: string; message: string }
 
 type Tab = 'explore' | 'favorites' | 'collections'
 
 const LIMIT = 20
+
+
+const FILTER_EMOJI: Record<TagFilterType, string> = {
+  author: '👤',
+  cuisine: '🗺',
+  category: '📂',
+  site: '🌐',
+}
 
 export function HomePage() {
   const [tab, setTab] = useState<Tab>('explore')
@@ -32,7 +48,11 @@ export function HomePage() {
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [showAddSite, setShowAddSite] = useState(false)
+  const [showFilterPanel, setShowFilterPanel] = useState(false)
   const [stats, setStats] = useState<ScrapeRunStats | null>(null)
+  const [toast, setToast] = useState<ToastState | null>(null)
+
+  const { activeFilters, activeFilterCount, toggleFilter, removeFilter, clearFilters } = useUrlFilters()
 
   // Collections state
   const [collections, setCollections] = useState<Collection[]>([])
@@ -42,10 +62,30 @@ export function HomePage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addSiteAnchorRef = useRef<HTMLDivElement>(null)
+  const filterAnchorRef = useRef<HTMLDivElement>(null)
 
   const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
   const refreshCollections = () => listCollections().then(setCollections).catch(() => null)
+
+  useEffect(() => {
+    if (!toast || toast.status === 'pending') return
+    const t = setTimeout(() => setToast(null), 5000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  const handleAddSite = (host: string, url: string) => {
+    setToast({ status: 'pending', site: host })
+    discoverSite(url)
+      .then((res) => {
+        startScrape()
+        setToast({ status: 'done', site: host, discovered: res.discovered })
+        refreshStats()
+      })
+      .catch((err) => {
+        setToast({ status: 'error', site: host, message: err instanceof Error ? err.message : 'Something went wrong' })
+      })
+  }
 
   useEffect(() => {
     refreshStats()
@@ -107,7 +147,7 @@ export function HomePage() {
 
     if (!query.trim()) {
       setLoading(true)
-      listRecipes(LIMIT, 0)
+      listRecipes(LIMIT, 0, activeFilters)
         .then((results) => {
           setRecipes(results)
           setHasMore(results.length === LIMIT)
@@ -119,7 +159,7 @@ export function HomePage() {
 
     setLoading(true)
     debounceRef.current = setTimeout(() => {
-      searchRecipes(query, LIMIT, 0)
+      searchRecipes(query, LIMIT, 0, activeFilters)
         .then((results) => {
           setRecipes(results)
           setHasMore(results.length === LIMIT)
@@ -131,7 +171,7 @@ export function HomePage() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [query, tab])
+  }, [query, tab, activeFilters])
 
   const handleLoadMore = async () => {
     const nextPage = page + 1
@@ -141,9 +181,9 @@ export function HomePage() {
       if (tab === 'collections' && selectedCollection) {
         results = await listCollectionRecipes(selectedCollection.id, LIMIT, nextPage * LIMIT)
       } else if (query.trim()) {
-        results = await searchRecipes(query, LIMIT, nextPage * LIMIT)
+        results = await searchRecipes(query, LIMIT, nextPage * LIMIT, activeFilters)
       } else {
-        results = await listRecipes(LIMIT, nextPage * LIMIT)
+        results = await listRecipes(LIMIT, nextPage * LIMIT, activeFilters)
       }
       setRecipes((prev) => [...prev, ...results])
       setHasMore(results.length === LIMIT)
@@ -175,6 +215,17 @@ export function HomePage() {
     setPage(0)
     setHasMore(false)
     setSelectedCollection(null)
+    setShowFilterPanel(false)
+    clearFilters()
+  }
+
+  const handleTagFilter = (filter: TagFilter) => {
+    setTab('explore')
+    setQuery('')
+    setPage(0)
+    setRecipes([])
+    setSelectedCollection(null)
+    toggleFilter(filter.type, filter.value)
   }
 
   const handleCreateCollection = async (e: React.FormEvent) => {
@@ -223,33 +274,74 @@ export function HomePage() {
           {showAddSite && (
             <AddSiteDropdown
               onClose={() => setShowAddSite(false)}
-              onDiscovered={refreshStats}
+              onAdd={handleAddSite}
             />
           )}
         </div>
       </header>
 
-      {stats && <StatsBar stats={stats} />}
-
       <nav className="tabs">
-        <button
-          className={tab === 'explore' ? 'active' : ''}
-          onClick={() => handleTabChange('explore')}
-        >
-          Explore
-        </button>
-        <button
-          className={tab === 'favorites' ? 'active' : ''}
-          onClick={() => handleTabChange('favorites')}
-        >
-          ♥ Favorites{stats && stats.favorites > 0 ? ` (${stats.favorites})` : ''}
-        </button>
-        <button
-          className={tab === 'collections' ? 'active' : ''}
-          onClick={() => handleTabChange('collections')}
-        >
-          📁 Collections{collections.length > 0 ? ` (${collections.length})` : ''}
-        </button>
+        <div className="tabs-row">
+          <button
+            className={tab === 'explore' ? 'active' : ''}
+            onClick={() => handleTabChange('explore')}
+          >
+            Explore
+          </button>
+          <button
+            className={tab === 'favorites' ? 'active' : ''}
+            onClick={() => handleTabChange('favorites')}
+          >
+            ♥ Favorites{stats && stats.favorites > 0 ? ` (${stats.favorites})` : ''}
+          </button>
+          <button
+            className={tab === 'collections' ? 'active' : ''}
+            onClick={() => handleTabChange('collections')}
+          >
+            📁 Collections{collections.length > 0 ? ` (${collections.length})` : ''}
+          </button>
+
+          {activeFilterCount > 0 && (
+            <>
+              {(Object.entries(activeFilters) as [TagFilterType, string][]).map(([type, value]) => (
+                <span key={type} className="active-filter-chip">
+                  {FILTER_EMOJI[type]} {value}
+                  <button
+                    className="active-filter-clear"
+                    onClick={() => removeFilter(type)}
+                    title={`Remove ${type} filter`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {activeFilterCount > 1 && (
+                <button className="active-filter-clear-all" onClick={clearFilters}>
+                  Clear all
+                </button>
+              )}
+            </>
+          )}
+
+          {tab === 'explore' && (
+            <div className="filter-anchor" ref={filterAnchorRef}>
+              <button
+                className={`btn-filter${showFilterPanel ? ' is-open' : ''}${activeFilterCount > 0 ? ' has-filters' : ''}`}
+                onClick={() => setShowFilterPanel((v) => !v)}
+                title="Filter recipes"
+              >
+                ⚙ Filters
+              </button>
+              {showFilterPanel && (
+                <FilterPanel
+                  activeFilters={activeFilters}
+                  onToggle={toggleFilter}
+                  onClose={() => setShowFilterPanel(false)}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </nav>
 
       {tab === 'collections' && !selectedCollection && (
@@ -317,9 +409,29 @@ export function HomePage() {
           emptyBody={emptyState.body}
           onFavorite={handleFavorite}
           onRemoveFromCollection={selectedCollection ? handleRemoveFromCollection : undefined}
+          onTagFilter={tab === 'explore' ? handleTagFilter : undefined}
+          activeFilters={tab === 'explore' ? activeFilters : undefined}
         />
       )}
 
+      {toast && (
+        <div className={`toast toast--${toast.status}`}>
+          {toast.status === 'pending' && <>
+            <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+            Adding <strong>{toast.site}</strong>…
+          </>}
+          {toast.status === 'done' && <>
+            ✓ <strong>{toast.site}</strong> added!{' '}
+            {toast.discovered > 0
+              ? <>{toast.discovered.toLocaleString()} recipes on the way.</>
+              : <>Already up to date.</>}
+          </>}
+          {toast.status === 'error' && <>
+            ✕ Couldn't add <strong>{toast.site}</strong>: {toast.message}
+          </>}
+          <button className="toast-close" onClick={() => setToast(null)}>×</button>
+        </div>
+      )}
     </>
   )
 }

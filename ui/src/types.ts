@@ -5,6 +5,22 @@ export interface Collection {
   created_at: string
 }
 
+export type TagFilterType = 'author' | 'cuisine' | 'category' | 'site'
+
+export interface TagFilter {
+  type: TagFilterType
+  value: string
+}
+
+export type ActiveFilters = Partial<Record<TagFilterType, string>>
+
+export interface FilterOption {
+  value: string
+  count: number
+}
+
+export type FilterOptions = Record<TagFilterType, FilterOption[]>
+
 export interface SearchResult {
   id: number
   url: string
@@ -14,6 +30,10 @@ export interface SearchResult {
   total_time: number | null
   yields: string | null
   image: string | null
+  site_name: string | null
+  author: string | null
+  cuisines: string[]
+  categories: string[]
   has_thumbnail: boolean
   is_favorite: boolean
   collections: string[]
@@ -30,8 +50,8 @@ export interface RecipeJson {
   instructions_list?: string[]
   nutrients?: Record<string, string>
   author?: string
-  cuisine?: string
-  category?: string
+  cuisine?: string[]
+  category?: string[]
   keywords?: string[]
 }
 

@@ -43,6 +43,10 @@ class SearchResult:
     total_time: int | None
     yields: str | None
     image: str | None
+    site_name: str | None = None
+    author: str | None = None
+    cuisines: list[str] = field(default_factory=list)
+    categories: list[str] = field(default_factory=list)
     is_favorite: bool = False
     has_thumbnail: bool = False
     collections: list[str] = field(default_factory=list)

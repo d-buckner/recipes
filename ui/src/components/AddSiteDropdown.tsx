@@ -1,24 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { discoverSite, getSites, getSupportedSites, startScrape } from '../api'
+import { getSites, getSupportedSites } from '../api'
 
 interface AddSiteDropdownProps {
   onClose: () => void
-  onDiscovered: () => void
+  onAdd: (host: string, url: string) => void
 }
 
-type Status = 'idle' | 'running' | 'done' | 'error'
-
-export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps) {
+export function AddSiteDropdown({ onClose, onAdd }: AddSiteDropdownProps) {
   const [inputValue, setInputValue] = useState('')
-  const [selectedHost, setSelectedHost] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const [supportedSites, setSupportedSites] = useState<string[]>([])
   const [indexedSites, setIndexedSites] = useState<Set<string>>(new Set())
-  const [status, setStatus] = useState<Status>('idle')
-  const [discovered, setDiscovered] = useState(0)
-  const [errorMsg, setErrorMsg] = useState('')
-  const [addedSite, setAddedSite] = useState('')
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
@@ -36,7 +29,6 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  // Close site list on outside click (within the panel)
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (comboRef.current && !comboRef.current.contains(e.target as Node)) {
@@ -47,32 +39,16 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Auto-close after success
-  useEffect(() => {
-    if (status !== 'done') return
-    const t = setTimeout(onClose, 2500)
-    return () => clearTimeout(t)
-  }, [status, onClose])
-
   const filtered = useMemo(() => {
     const q = inputValue.toLowerCase().trim()
     if (!q) return supportedSites.slice(0, 80)
     return supportedSites.filter((s) => s.includes(q)).slice(0, 80)
   }, [inputValue, supportedSites])
 
-  const handleInputChange = (val: string) => {
-    setInputValue(val)
-    setSelectedHost('')
-    setOpen(true)
-    setActiveIdx(-1)
-  }
-
   const handleSelect = (host: string) => {
-    setInputValue(host)
-    setSelectedHost(host)
-    setOpen(false)
-    setActiveIdx(-1)
-    inputRef.current?.focus()
+    const url = host.startsWith('http') ? host : `https://${host}`
+    onAdd(host, url)
+    onClose()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -92,7 +68,7 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
         handleSelect(filtered[activeIdx])
       } else {
         setOpen(false)
-        void handleAdd()
+        handleAdd()
       }
     } else if (e.key === 'Escape') {
       setOpen(false)
@@ -105,56 +81,15 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
     el?.scrollIntoView({ block: 'nearest' })
   }, [activeIdx])
 
-  const handleAdd = async () => {
-    const host = selectedHost || inputValue.trim()
-    if (!host || status === 'running') return
+  const handleAdd = () => {
+    const host = inputValue.trim()
+    if (!host) return
     const url = host.startsWith('http') ? host : `https://${host}`
-    setAddedSite(host)
-    setStatus('running')
-    try {
-      const res = await discoverSite(url)
-      await startScrape()
-      setDiscovered(res.discovered)
-      setStatus('done')
-      onDiscovered()
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
-      setStatus('error')
-    }
+    onAdd(host, url)
+    onClose()
   }
 
-  const canAdd = (selectedHost || inputValue.trim()).length > 0 && status === 'idle'
-
-  if (status === 'done') {
-    return (
-      <div className="add-site-dropdown">
-        <div className="add-site-result">
-          <div className="add-site-result-icon">✓</div>
-          <div>
-            <strong>{addedSite}</strong> added!{' '}
-            {discovered > 0
-              ? <>{discovered.toLocaleString()} recipes on the way.</>
-              : <>Already up to date.</>}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="add-site-dropdown">
-        <div className="add-site-error">
-          <strong>Couldn't add {addedSite}</strong>
-          <p>{errorMsg}</p>
-          <div className="form-actions" style={{ marginTop: 12 }}>
-            <button className="btn ghost" onClick={onClose}>Dismiss</button>
-            <button className="btn primary" onClick={() => setStatus('idle')}>Try Again</button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const canAdd = inputValue.trim().length > 0
 
   return (
     <div className="add-site-dropdown">
@@ -170,8 +105,7 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
             value={inputValue}
             autoComplete="off"
             spellCheck={false}
-            disabled={status === 'running'}
-            onChange={(e) => handleInputChange(e.target.value)}
+            onChange={(e) => { setInputValue(e.target.value); setOpen(true); setActiveIdx(-1) }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
           />
@@ -181,10 +115,7 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
                 <li
                   key={host}
                   role="option"
-                  className={[
-                    'site-dropdown-item',
-                    i === activeIdx ? 'is-active' : '',
-                  ].filter(Boolean).join(' ')}
+                  className={['site-dropdown-item', i === activeIdx ? 'is-active' : ''].filter(Boolean).join(' ')}
                   onMouseDown={(e) => { e.preventDefault(); handleSelect(host) }}
                   onMouseEnter={() => setActiveIdx(i)}
                 >
@@ -203,14 +134,6 @@ export function AddSiteDropdown({ onClose, onDiscovered }: AddSiteDropdownProps)
             : 'Loading…'}
         </span>
       </div>
-
-      {status === 'running' && (
-        <div className="add-site-progress">
-          <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2, marginBottom: 0 }} />
-          <span>Finding recipes on <strong>{addedSite}</strong>…</span>
-        </div>
-      )}
-
       <div className="form-actions">
         <button className="btn primary" onClick={handleAdd} disabled={!canAdd}>
           Add Site

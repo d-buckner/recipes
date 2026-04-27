@@ -117,6 +117,28 @@ _MIGRATIONS = [
 ]
 
 
+def _migrate_list_fields() -> None:
+    """Convert legacy comma-separated category/cuisine strings to JSON arrays.
+    Safe to run on every startup — skips rows already storing arrays."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, recipe_json FROM recipes WHERE recipe_json IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            data = json.loads(row["recipe_json"])
+            changed = False
+            for field in ("category", "cuisine"):
+                val = data.get(field)
+                if isinstance(val, str):
+                    data[field] = [v.strip() for v in val.split(",") if v.strip()] or None
+                    changed = True
+            if changed:
+                conn.execute(
+                    "UPDATE recipes SET recipe_json = ? WHERE id = ?",
+                    (json.dumps(data), row["id"]),
+                )
+
+
 def init_db(db_path: str | None = None) -> None:
     if db_path:
         configure(db_path)
@@ -128,6 +150,7 @@ def init_db(db_path: str | None = None) -> None:
                 conn.execute(migration)
             except sqlite3.OperationalError:
                 pass
+    _migrate_list_fields()
 
 
 def reset_stale_processing() -> int:
@@ -263,16 +286,43 @@ def fail_recipe(recipe_id: int, error_msg: str, max_retries: int = 3) -> None:
         )
 
 
-def search_recipes(query: str, limit: int = 20, offset: int = 0) -> list[SearchResult]:
+def search_recipes(
+    query: str,
+    limit: int = 20,
+    offset: int = 0,
+    author: str | None = None,
+    cuisine: str | None = None,
+    category: str | None = None,
+    site: str | None = None,
+) -> list[SearchResult]:
+    extra_conditions: list[str] = []
+    extra_params: list[str] = []
+    if author:
+        extra_conditions.append("json_extract(r.recipe_json, '$.author') = ?")
+        extra_params.append(author)
+    if cuisine:
+        extra_conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value = ?)")
+        extra_params.append(cuisine)
+    if category:
+        extra_conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value = ?)")
+        extra_params.append(category)
+    if site:
+        extra_conditions.append("r.site = ?")
+        extra_params.append(site)
+    extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
     with get_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT r.id, r.url, r.site,
                    json_extract(r.recipe_json, '$.title') AS title,
                    json_extract(r.recipe_json, '$.description') AS description,
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   json_extract(r.recipe_json, '$.site_name') AS site_name,
+                   json_extract(r.recipe_json, '$.author') AS author,
+                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
+                   json_extract(r.recipe_json, '$.category') AS category,
                    (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                    COALESCE(
@@ -284,11 +334,11 @@ def search_recipes(query: str, limit: int = 20, offset: int = 0) -> list[SearchR
             FROM recipe_fts_search fs
             JOIN recipes r ON r.id = fs.rowid
             LEFT JOIN favorites f ON f.recipe_id = r.id
-            WHERE recipe_fts_search MATCH ? AND r.status = 'complete'
+            WHERE recipe_fts_search MATCH ? AND r.status = 'complete'{extra_where}
             ORDER BY rank
             LIMIT ? OFFSET ?
             """,
-            (query, limit, offset),
+            [query, *extra_params, limit, offset],
         ).fetchall()
         return [_row_to_search_result(r) for r in rows]
 
@@ -338,6 +388,10 @@ def list_favorites() -> list[SearchResult]:
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   json_extract(r.recipe_json, '$.site_name') AS site_name,
+                   json_extract(r.recipe_json, '$.author') AS author,
+                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
+                   json_extract(r.recipe_json, '$.category') AS category,
                    (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    1 AS is_favorite,
                    COALESCE(
@@ -381,16 +435,42 @@ def get_stats() -> ScrapeRunStats:
         )
 
 
-def list_recipes(limit: int = 20, offset: int = 0) -> list[SearchResult]:
+def list_recipes(
+    limit: int = 20,
+    offset: int = 0,
+    author: str | None = None,
+    cuisine: str | None = None,
+    category: str | None = None,
+    site: str | None = None,
+) -> list[SearchResult]:
+    conditions = ["r.status = 'complete'"]
+    params: list[str | int] = []
+    if author:
+        conditions.append("json_extract(r.recipe_json, '$.author') = ?")
+        params.append(author)
+    if cuisine:
+        conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value = ?)")
+        params.append(cuisine)
+    if category:
+        conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value = ?)")
+        params.append(category)
+    if site:
+        conditions.append("r.site = ?")
+        params.append(site)
+    where = " AND ".join(conditions)
     with get_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT r.id, r.url, r.site,
                    json_extract(r.recipe_json, '$.title') AS title,
                    json_extract(r.recipe_json, '$.description') AS description,
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   json_extract(r.recipe_json, '$.site_name') AS site_name,
+                   json_extract(r.recipe_json, '$.author') AS author,
+                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
+                   json_extract(r.recipe_json, '$.category') AS category,
                    (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                    COALESCE(
@@ -401,11 +481,11 @@ def list_recipes(limit: int = 20, offset: int = 0) -> list[SearchResult]:
                    ) AS collection_names
             FROM recipes r
             LEFT JOIN favorites f ON f.recipe_id = r.id
-            WHERE r.status = 'complete'
+            WHERE {where}
             ORDER BY r.updated_at DESC
             LIMIT ? OFFSET ?
             """,
-            (limit, offset),
+            [*params, limit, offset],
         ).fetchall()
         return [_row_to_search_result(r) for r in rows]
 
@@ -414,6 +494,63 @@ def list_sites() -> list[str]:
     with get_conn() as conn:
         rows = conn.execute("SELECT DISTINCT site FROM recipes ORDER BY site").fetchall()
         return [row["site"] for row in rows]
+
+
+def list_filter_options() -> dict[str, list[dict[str, str | int]]]:
+    """Return distinct values + counts for each filterable dimension."""
+    with get_conn() as conn:
+        cuisine_rows = conn.execute(
+            """
+            SELECT je.value, COUNT(*) AS cnt
+            FROM recipes r, json_each(r.recipe_json, '$.cuisine') je
+            WHERE r.status = 'complete' AND je.value != ''
+            GROUP BY je.value
+            ORDER BY cnt DESC, je.value
+            LIMIT 100
+            """
+        ).fetchall()
+
+        category_rows = conn.execute(
+            """
+            SELECT je.value, COUNT(*) AS cnt
+            FROM recipes r, json_each(r.recipe_json, '$.category') je
+            WHERE r.status = 'complete' AND je.value != ''
+            GROUP BY je.value
+            ORDER BY cnt DESC, je.value
+            LIMIT 100
+            """
+        ).fetchall()
+
+        author_rows = conn.execute(
+            """
+            SELECT json_extract(recipe_json, '$.author') AS value, COUNT(*) AS cnt
+            FROM recipes
+            WHERE status = 'complete'
+              AND json_extract(recipe_json, '$.author') IS NOT NULL
+              AND json_extract(recipe_json, '$.author') != ''
+            GROUP BY value
+            ORDER BY cnt DESC, value
+            LIMIT 100
+            """
+        ).fetchall()
+
+        site_rows = conn.execute(
+            """
+            SELECT site AS value, COUNT(*) AS cnt
+            FROM recipes
+            WHERE status = 'complete'
+            GROUP BY site
+            ORDER BY cnt DESC, site
+            LIMIT 100
+            """
+        ).fetchall()
+
+    return {
+        "cuisine": [{"value": r["value"], "count": r["cnt"]} for r in cuisine_rows],
+        "category": [{"value": r["value"], "count": r["cnt"]} for r in category_rows],
+        "author": [{"value": r["value"], "count": r["cnt"]} for r in author_rows],
+        "site": [{"value": r["value"], "count": r["cnt"]} for r in site_rows],
+    }
 
 
 def create_collection(name: str) -> int:
@@ -484,6 +621,10 @@ def list_collection_recipes(collection_id: int, limit: int = 20, offset: int = 0
                    json_extract(r.recipe_json, '$.total_time') AS total_time,
                    json_extract(r.recipe_json, '$.yields') AS yields,
                    json_extract(r.recipe_json, '$.image') AS image,
+                   json_extract(r.recipe_json, '$.site_name') AS site_name,
+                   json_extract(r.recipe_json, '$.author') AS author,
+                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
+                   json_extract(r.recipe_json, '$.category') AS category,
                    (r.thumbnail IS NOT NULL) AS has_thumbnail,
                    CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                    COALESCE(
@@ -520,6 +661,19 @@ def _row_to_recipe(row: sqlite3.Row) -> RecipeRow:
     )
 
 
+def _parse_json_list(value: str | None) -> list[str]:
+    """Parse a JSON array field from recipe_json. Returns [] for null/missing."""
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(v).strip() for v in parsed if str(v).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return []
+
+
 def _row_to_search_result(row: sqlite3.Row) -> SearchResult:
     raw_names = row["collection_names"] or ""
     collections = [n for n in raw_names.split("||") if n] if raw_names else []
@@ -532,6 +686,10 @@ def _row_to_search_result(row: sqlite3.Row) -> SearchResult:
         total_time=row["total_time"],
         yields=row["yields"],
         image=row["image"],
+        site_name=row["site_name"] or None,
+        author=row["author"] or None,
+        cuisines=_parse_json_list(row["cuisine"]),
+        categories=_parse_json_list(row["category"]),
         is_favorite=bool(row["is_favorite"]),
         has_thumbnail=bool(row["has_thumbnail"]),
         collections=collections,

@@ -28,18 +28,32 @@ def fetch_html(url: str) -> str:
     return response.text
 
 
+def _split_csv_field(value: object) -> list[str]:
+    """Normalise a field that recipe-scrapers may return as a comma-separated string."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [v.strip() for v in str(value).split(',') if v.strip()]
+
+
 def parse_recipe(html: str, url: str) -> dict:
     try:
         scraper = scrape_html(html, org_url=url)
         data = scraper.to_json()
         log.debug("  parsed (supported site): %s", data.get("title"))
-        return data
     except WebsiteNotImplementedError:
         log.debug("  site not supported, trying wild mode")
         scraper = scrape_html(html, org_url=url, supported_only=False)
         data = scraper.to_json()
         log.debug("  parsed (wild mode): %s", data.get("title"))
-        return data
+    for field in ('category', 'cuisine'):
+        data[field] = _split_csv_field(data.get(field)) or None
+    if not data.get('site_name'):
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ''
+        data['site_name'] = host.removeprefix('www.').rpartition('.')[0] or host
+    return data
 
 
 def make_thumbnail(image_url: str) -> bytes | None:

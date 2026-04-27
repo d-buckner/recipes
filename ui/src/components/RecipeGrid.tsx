@@ -1,4 +1,4 @@
-import type { SearchResult } from '../types'
+import type { ActiveFilters, SearchResult, TagFilter } from '../types'
 import { RecipeCard } from './RecipeCard'
 
 interface RecipeGridProps {
@@ -12,6 +12,8 @@ interface RecipeGridProps {
   emptyBody: string
   onFavorite: (id: number, isFavorite: boolean) => void
   onRemoveFromCollection?: (id: number) => void
+  onTagFilter?: (filter: TagFilter) => void
+  activeFilters?: ActiveFilters
 }
 
 export function RecipeGrid({
@@ -25,6 +27,8 @@ export function RecipeGrid({
   emptyBody,
   onFavorite,
   onRemoveFromCollection,
+  onTagFilter,
+  activeFilters,
 }: RecipeGridProps) {
   // Show spinner only when loading with nothing to display yet.
   // When there are stale results, keep the grid mounted (dimmed) to avoid
@@ -57,6 +61,8 @@ export function RecipeGrid({
             recipe={recipe}
             onFavorite={onFavorite}
             onRemoveFromCollection={onRemoveFromCollection}
+            onTagFilter={onTagFilter}
+            activeFilters={activeFilters}
           />
         ))}
       </div>
