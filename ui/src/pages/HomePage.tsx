@@ -86,7 +86,9 @@ export function HomePage() {
     if (tab !== 'explore') return
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
-    setRecipes([])
+    // Don't clear recipes here — keep stale results visible (dimmed) while
+    // the new fetch is in flight so the grid stays mounted and avoids a
+    // 1-column layout flash on remount.
     setPage(0)
 
     if (!query.trim()) {

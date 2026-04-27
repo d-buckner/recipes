@@ -26,7 +26,10 @@ export function RecipeGrid({
   onFavorite,
   onCollectionUpdate,
 }: RecipeGridProps) {
-  if (loading) {
+  // Show spinner only when loading with nothing to display yet.
+  // When there are stale results, keep the grid mounted (dimmed) to avoid
+  // the 1-column flash that occurs when the grid DOM unmounts and remounts.
+  if (loading && recipes.length === 0) {
     return (
       <div className="state-message">
         <div className="spinner" />
@@ -35,7 +38,7 @@ export function RecipeGrid({
     )
   }
 
-  if (recipes.length === 0) {
+  if (!loading && recipes.length === 0) {
     return (
       <div className="state-message">
         <div className="state-icon">{emptyIcon}</div>
@@ -47,7 +50,7 @@ export function RecipeGrid({
 
   return (
     <>
-      <div className="recipe-grid">
+      <div className={`recipe-grid${loading ? ' recipe-grid--loading' : ''}`}>
         {recipes.map((recipe) => (
           <RecipeCard
             key={recipe.id}
@@ -58,7 +61,7 @@ export function RecipeGrid({
         ))}
       </div>
 
-      {hasMore && (
+      {hasMore && !loading && (
         <div className="load-more-wrap">
           <button
             className="btn-load-more"

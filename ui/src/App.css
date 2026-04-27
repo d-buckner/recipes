@@ -163,6 +163,11 @@ body {
   gap: 12px;
 }
 
+.recipe-grid--loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* ── Recipe card ── */
 .recipe-card {
   background: var(--card-bg);
@@ -183,18 +188,19 @@ body {
 .card-image-wrap {
   position: relative;
   width: 100%;
+  height: 180px;
   overflow: hidden;
   background: var(--bg);
 }
 
 .card-image-wrap img {
   width: 100%;
+  height: 100%;
   display: block;
   object-fit: cover;
 }
 
 .card-image-wrap.no-image {
-  height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -804,10 +810,7 @@ a.recipe-card {
 
 /* ── Collection picker dropdown ── */
 .collection-picker {
-  position: absolute;
-  top: 48px;
-  right: 8px;
-  z-index: 20;
+  /* position/z-index set inline via fixed portal positioning */
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.18);
