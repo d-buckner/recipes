@@ -12,8 +12,12 @@ from pydantic import BaseModel, Field
 class Tools:
     class Valves(BaseModel):
         api_base_url: str = Field(
-            default="http://localhost:8000",
-            description="Base URL of the recipes API server (e.g. http://192.168.1.10:8000)",
+            default="http://localhost:8000/api",
+            description=(
+                "Base URL of the recipes API server. "
+                "Docker: http://host.docker.internal:8000/api — "
+                "Local dev (no static dir): http://localhost:8000"
+            ),
         )
 
     class UserValves(BaseModel):
@@ -87,8 +91,9 @@ class Tools:
         except Exception as exc:
             return f"Error fetching recipe: {exc}"
 
-        r = data.get("recipe_json") or {}
-        return _render_recipe(r, data["url"])
+        if not data.get("recipe_json"):
+            return f"Recipe {recipe_id} exists but has not been scraped yet (status: {data.get('status', 'unknown')})."
+        return _render_recipe(data["recipe_json"], data["url"])
 
     def add_favorite(self, recipe_id: int) -> str:
         """
