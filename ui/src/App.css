@@ -104,6 +104,26 @@ body {
   transform: scale(1.02);
 }
 
+.add-site-anchor {
+  position: relative;
+}
+
+.add-site-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+  z-index: 400;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 /* ── Stats bar ── */
 .stats-bar {
   background: #fff;
@@ -124,6 +144,10 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.stat-item--active {
+  color: #92400e;
 }
 
 /* ── Tabs ── */

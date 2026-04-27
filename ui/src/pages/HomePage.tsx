@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   addFavorite,
   createCollection,
@@ -13,7 +13,7 @@ import {
   searchRecipes,
 } from '../api'
 
-import { AddSiteModal } from '../components/AddSiteModal'
+import { AddSiteDropdown } from '../components/AddSiteDropdown'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
 import { StatsBar } from '../components/StatsBar'
@@ -41,8 +41,9 @@ export function HomePage() {
   const [creatingCollection, setCreatingCollection] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const addSiteAnchorRef = useRef<HTMLDivElement>(null)
 
-  const refreshStats = () => getStats().then(setStats).catch(() => null)
+  const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
   const refreshCollections = () => listCollections().then(setCollections).catch(() => null)
 
@@ -50,6 +51,17 @@ export function HomePage() {
     refreshStats()
     const interval = setInterval(refreshStats, 15_000)
     return () => clearInterval(interval)
+  }, [refreshStats])
+
+  // Close the add-site dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (addSiteAnchorRef.current && !addSiteAnchorRef.current.contains(e.target as Node)) {
+        setShowAddSite(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [])
 
   // Load favorites when on that tab
@@ -206,7 +218,15 @@ export function HomePage() {
       <header className="header">
         <span className="logo">🍴 Recipes</span>
         <SearchBar value={query} onChange={setQuery} disabled={tab !== 'explore'} />
-        <button className="btn-add" onClick={() => setShowAddSite(true)}>+ Add Site</button>
+        <div className="add-site-anchor" ref={addSiteAnchorRef}>
+          <button className="btn-add" onClick={() => setShowAddSite((v) => !v)}>+ Add Site</button>
+          {showAddSite && (
+            <AddSiteDropdown
+              onClose={() => setShowAddSite(false)}
+              onDiscovered={refreshStats}
+            />
+          )}
+        </div>
       </header>
 
       {stats && <StatsBar stats={stats} />}
@@ -300,12 +320,6 @@ export function HomePage() {
         />
       )}
 
-      {showAddSite && (
-        <AddSiteModal
-          onClose={() => setShowAddSite(false)}
-          onDiscovered={refreshStats}
-        />
-      )}
     </>
   )
 }
