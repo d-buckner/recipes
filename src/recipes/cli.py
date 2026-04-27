@@ -71,7 +71,7 @@ def scrape(workers: int | None, delay: float | None, sitemap: str | None) -> Non
 def serve(host: str, port: int, reload: bool) -> None:
     """Start the recipe API server."""
     import uvicorn
-    uvicorn.run("recipes.api:app", host=host, port=port, reload=reload)
+    uvicorn.run("recipes.api:create_app", factory=True, host=host, port=port, reload=reload)
 
 
 @cli.command()

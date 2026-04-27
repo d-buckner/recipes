@@ -217,3 +217,36 @@ def add_recipe_to_collection(collection_id: int, recipe_id: int) -> None:
 @app.delete("/collections/{collection_id}/recipes/{recipe_id}", status_code=204)
 def remove_recipe_from_collection(collection_id: int, recipe_id: int) -> None:
     db.remove_recipe_from_collection(collection_id, recipe_id)
+
+
+def create_app() -> FastAPI:
+    """ASGI app factory used by the serve command.
+
+    Dev (RECIPES_STATIC_DIR unset): returns the bare API app so the Vite
+    dev-server proxy can strip /api and forward to the root routes as usual.
+
+    Production (RECIPES_STATIC_DIR set): returns a wrapper that mounts the
+    API under /api and serves the compiled frontend at /.
+    """
+    import os
+    from pathlib import Path
+
+    static_dir_env = os.environ.get("RECIPES_STATIC_DIR", "")
+    if not static_dir_env:
+        return app
+
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    static_dir = Path(static_dir_env)
+    wrapper = FastAPI()
+    wrapper.mount("/api", app)
+
+    if static_dir.exists():
+        wrapper.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+
+        @wrapper.get("/{full_path:path}", include_in_schema=False)
+        def serve_spa(full_path: str = "") -> FileResponse:
+            return FileResponse(static_dir / "index.html")
+
+    return wrapper

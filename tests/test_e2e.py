@@ -144,33 +144,27 @@ def test_add_site_scrape_and_view_recipes(api_server, ui_server):
         page.goto(UI_URL)
         expect(page.get_by_text("+ Add Site")).to_be_visible(timeout=10_000)
 
-        # 2. Open the Add Site modal
+        # 2. Open the Add Site dropdown
         page.get_by_text("+ Add Site").click()
-        expect(page.locator(".modal")).to_be_visible()
+        expect(page.locator(".add-site-dropdown")).to_be_visible()
 
         # 3. Enter the site URL
-        page.locator("#site-url").fill(TARGET_SITE)
+        page.locator("#site-search").fill(TARGET_SITE)
 
-        # 4. Trigger discovery — probing sitemaps with real requests, allow several minutes
-        page.get_by_text("Discover Recipes").click()
-        expect(page.locator(".discover-result")).to_be_visible(timeout=DISCOVERY_TIMEOUT_MS)
+        # 4. Trigger discovery + scraping in one step; probing sitemaps takes several minutes
+        page.get_by_role("button", name="Add Site").click()
+        expect(page.locator(".add-site-result")).to_be_visible(timeout=DISCOVERY_TIMEOUT_MS)
 
         # 5. Confirm URLs were discovered
-        count_text = page.locator(".result-count").text_content() or ""
-        discovered = int("".join(ch for ch in count_text if ch.isdigit()) or "0")
-        assert discovered > 0, (
-            f"Expected recipe URLs to be discovered for {TARGET_SITE}, "
-            f"got result: {count_text!r}"
+        result_text = page.locator(".add-site-result").text_content() or ""
+        assert "Already up to date" not in result_text, (
+            f"Expected new recipe URLs to be discovered for {TARGET_SITE}, "
+            f"got: {result_text!r}"
         )
 
-        # 6. Start background scraping
-        page.get_by_text("Start Scraping Now").click()
-        expect(page.get_by_text("Scraping started")).to_be_visible(timeout=5_000)
+        # Dropdown auto-closes after 2.5 s; no manual dismiss needed
 
-        # 7. Close modal
-        page.keyboard.press("Escape")
-
-        # 8. Poll the API until at least MIN_COMPLETE recipes with real titles are scraped
+        # 6. Poll the API until at least MIN_COMPLETE recipes with real titles are scraped
         deadline = time.time() + SCRAPE_POLL_SECS
         while time.time() < deadline:
             if _titled_recipe_count() >= MIN_COMPLETE:
@@ -183,11 +177,11 @@ def test_add_site_scrape_and_view_recipes(api_server, ui_server):
                 f"Stats: {stats}"
             )
 
-        # 9. Reload so the recipe grid fetches the newly scraped recipes
+        # 7. Reload so the recipe grid fetches the newly scraped recipes
         page.reload()
         expect(page.locator(".recipe-card").first).to_be_visible(timeout=15_000)
 
-        # 10. Verify recipe cards have real content
+        # 8. Verify recipe cards have real content
         cards = page.locator(".recipe-card")
         card_count = cards.count()
         assert card_count >= MIN_COMPLETE, (
@@ -205,7 +199,7 @@ def test_add_site_scrape_and_view_recipes(api_server, ui_server):
                 f"Expected alisoneroman.com attribution, got: {site!r}"
             )
 
-        # 11. Click the first card and verify the recipe detail page loads
+        # 9. Click the first card and verify the recipe detail page loads
         first_title = (cards.first.locator(".card-title").text_content() or "").strip()
         cards.first.click()
         page.wait_for_url("**/recipe/**", timeout=5_000)
