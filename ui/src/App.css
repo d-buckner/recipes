@@ -713,6 +713,76 @@ a.recipe-card {
   .recipe-columns { grid-template-columns: 1fr; gap: 24px; }
 }
 
+/* ── Mobile (≤600px) ── */
+@media (max-width: 600px) {
+  /* Two-row header: logo + button on top, search full-width below */
+  .header {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 16px;
+    gap: 8px;
+  }
+
+  .add-site-anchor {
+    margin-left: auto;
+  }
+
+  .search-bar {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  /* Prevent dropdown from overflowing viewport on narrow phones */
+  .add-site-dropdown {
+    max-width: calc(100vw - 32px);
+  }
+
+  /* Stats bar: allow wrapping */
+  .stats-bar {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 16px;
+  }
+
+  /* Tabs: scroll horizontally instead of wrapping */
+  .tabs {
+    padding: 12px 12px 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Narrower minimum card width → 2-column layout on phones */
+  .recipe-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    padding: 12px 12px 40px;
+    gap: 10px;
+  }
+
+  /* Tighter padding on inner pages */
+  .collections-page {
+    padding: 12px 12px 40px;
+  }
+
+  .recipe-page-content {
+    padding: 20px 16px 48px;
+  }
+
+  /* Larger touch target for collection tile delete */
+  .collection-tile-delete {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+}
+
 /* ── Site combobox ── */
 .site-combobox {
   position: relative;

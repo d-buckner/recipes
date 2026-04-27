@@ -3,20 +3,21 @@ Open WebUI Tool: Recipe Search
 Searches your personal recipe database and renders recipes in markdown.
 """
 
-import json
 from typing import Any
 
 import requests
-from pydantic import BaseModel
-
-
-class Valves(BaseModel):
-    api_base_url: str = "http://localhost:8000"
+from pydantic import BaseModel, Field
 
 
 class Tools:
+    class Valves(BaseModel):
+        api_base_url: str = Field(
+            default="http://localhost:8000",
+            description="Base URL of the recipes API server (e.g. http://192.168.1.10:8000)",
+        )
+
     def __init__(self):
-        self.valves = Valves()
+        self.valves = self.Valves()
 
     def search_recipes(self, query: str) -> str:
         """
@@ -25,14 +26,15 @@ class Tools:
 
         :param query: Search terms, e.g. "chicken pasta", "vegetarian soup"
         """
+        url = f"{self.valves.api_base_url}/search"
         try:
-            resp = requests.get(
-                f"{self.valves.api_base_url}/search",
-                params={"q": query, "limit": 10},
-                timeout=10,
-            )
+            resp = requests.get(url, params={"q": query, "limit": 10}, timeout=10)
             resp.raise_for_status()
             results = resp.json()
+        except requests.exceptions.ConnectionError:
+            return f"Error searching recipes: could not connect to {url}. Check that the recipes server is running and the API URL is configured correctly in tool settings."
+        except requests.exceptions.HTTPError as exc:
+            return f"Error searching recipes: server returned {exc.response.status_code} — {exc.response.text[:200]}"
         except Exception as exc:
             return f"Error searching recipes: {exc}"
 
@@ -59,15 +61,17 @@ class Tools:
 
         :param recipe_id: The numeric ID of the recipe (from search results)
         """
+        url = f"{self.valves.api_base_url}/recipes/{recipe_id}"
         try:
-            resp = requests.get(
-                f"{self.valves.api_base_url}/recipes/{recipe_id}",
-                timeout=10,
-            )
+            resp = requests.get(url, timeout=10)
             if resp.status_code == 404:
                 return f"Recipe {recipe_id} not found."
             resp.raise_for_status()
             data = resp.json()
+        except requests.exceptions.ConnectionError:
+            return f"Error fetching recipe: could not connect to {url}. Check the API URL in tool settings."
+        except requests.exceptions.HTTPError as exc:
+            return f"Error fetching recipe: server returned {exc.response.status_code} — {exc.response.text[:200]}"
         except Exception as exc:
             return f"Error fetching recipe: {exc}"
 
