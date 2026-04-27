@@ -209,8 +209,9 @@ class TestDiscoverSite:
 
         assert count == 1  # fallback: URL filter picks it up
 
-    def test_url_filter_still_applied_within_confirmed_sitemaps(self, mem_db):
-        """Even probe-confirmed sitemaps may have non-recipe URLs (e.g. newsletters)."""
+    def test_confirmed_sitemaps_bypass_url_filter(self, mem_db):
+        """Probe-confirmed sitemaps bypass the URL filter entirely.
+        Sites with flat slugs (no /recipe/ segment) must not have their URLs dropped."""
         posts = _leaf(
             "https://example.com/sitemap-posts.xml",
             [
@@ -224,9 +225,10 @@ class TestDiscoverSite:
              patch("recipes.discovery._probe_has_recipes", return_value=True):
             count = discover_site("https://example.com")
 
-        assert count == 1  # newsletters excluded by URL filter
+        assert count == 2  # probe confirmed the sitemap; URL filter is not applied
 
-    def test_custom_url_filter(self, mem_db):
+    def test_custom_url_filter_applied_in_fallback_mode(self, mem_db):
+        """Custom URL filter is applied when probe finds no confirmed sitemaps (fallback)."""
         leaf = _leaf(
             "https://example.com/sitemap.xml",
             ["https://example.com/food/chicken", "https://example.com/about"],
@@ -234,10 +236,10 @@ class TestDiscoverSite:
         root = _index(None, [leaf])
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=True):
+             patch("recipes.discovery._probe_has_recipes", return_value=False):
             count = discover_site("https://example.com", url_filter=r"/food")
 
-        assert count == 1
+        assert count == 1  # /food filter applied in fallback; /about excluded
 
     def test_deduplicates_across_sitemaps(self, mem_db):
         url = "https://example.com/recipes/pasta"
@@ -250,3 +252,62 @@ class TestDiscoverSite:
             count = discover_site("https://example.com")
 
         assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# Flat-URL sites (e.g. justinesnacks.com)
+# ---------------------------------------------------------------------------
+
+class TestFlatUrlSites:
+    """
+    Sites like justinesnacks.com (Yoast SEO / WordPress) publish recipe posts at
+    flat top-level slugs: https://justinesnacks.com/vanilla-latte-cake/
+
+    There is no /recipe/ path segment, so the default url_filter_pattern=r"/recipe"
+    drops every URL from the post-sitemap even when the probe correctly confirms it
+    contains recipes.  Probe-confirmed sitemaps must bypass the URL filter.
+    """
+
+    def test_flat_url_recipes_discovered_when_post_sitemap_confirmed(self, mem_db):
+        posts = _leaf(
+            "https://justinesnacks.com/post-sitemap.xml",
+            [
+                "https://justinesnacks.com/vanilla-latte-cake/",
+                "https://justinesnacks.com/burrata-with-hot-honey-on-ciabatta/",
+                "https://justinesnacks.com/lemon-poppyseed-truffles-easy-4-ingredients/",
+            ],
+        )
+        root = _index(None, [posts])
+
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
+             patch("recipes.discovery._probe_has_recipes", return_value=True):
+            count = discover_site("https://justinesnacks.com")
+
+        assert count == 3  # all flat-slug recipes included; currently 0 due to /recipe filter
+
+    def test_non_post_sitemaps_excluded_by_probe(self, mem_db):
+        """Category and tag sitemaps should be excluded by probe, not URL filter."""
+        posts = _leaf(
+            "https://justinesnacks.com/post-sitemap.xml",
+            [
+                "https://justinesnacks.com/vanilla-latte-cake/",
+                "https://justinesnacks.com/chocolate-chip-tahini-cookies/",
+            ],
+        )
+        categories = _leaf(
+            "https://justinesnacks.com/category-sitemap.xml",
+            [
+                "https://justinesnacks.com/category/baking/",
+                "https://justinesnacks.com/category/breakfast/",
+            ],
+        )
+        root = _index(None, [posts, categories])
+
+        def fake_probe(sitemap, **_):
+            return sitemap is posts  # only the post sitemap has real recipes
+
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
+             patch("recipes.discovery._probe_has_recipes", side_effect=fake_probe):
+            count = discover_site("https://justinesnacks.com")
+
+        assert count == 2  # only the 2 post URLs; category sitemap excluded by probe

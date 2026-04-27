@@ -128,11 +128,17 @@ def discover_site(site_url: str, url_filter: str | None = None) -> int:
         log.warning("Probe found no recipe sitemaps, falling back to all with URL filter")
         selected = leaf_sitemaps
 
+    # The URL filter is a heuristic for fallback mode only.  When the probe has
+    # already confirmed that a sitemap contains real recipes we trust all of its
+    # URLs — applying the filter would drop recipes from sites that use flat
+    # slugs (e.g. justinesnacks.com/vanilla-latte-cake/) with no /recipe/ segment.
+    apply_url_filter = not confirmed
+
     urls: list[tuple[str, str]] = []
     for sitemap in selected:
         for page in sitemap.all_pages():
             url = page.url
-            if url and pattern.search(url):
+            if url and (not apply_url_filter or pattern.search(url)):
                 log.debug("  + %s", url)
                 urls.append((url, hostname))
 

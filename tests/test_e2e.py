@@ -209,7 +209,11 @@ def test_add_site_scrape_and_view_recipes(api_server, ui_server):
         first_title = (cards.first.locator(".card-title").text_content() or "").strip()
         cards.first.click()
         page.wait_for_url("**/recipe/**", timeout=5_000)
-        # Recipe page should show the same title somewhere on the page
-        expect(page.get_by_text(first_title, exact=False)).to_be_visible(timeout=5_000)
+        # Recipe page should show the title in the page heading (not a card-title)
+        expect(page.locator(".recipe-page-title")).to_be_visible(timeout=5_000)
+        page_title = (page.locator(".recipe-page-title").text_content() or "").strip()
+        assert first_title in page_title or page_title in first_title, (
+            f"Recipe page title {page_title!r} doesn't match card title {first_title!r}"
+        )
 
         browser.close()
