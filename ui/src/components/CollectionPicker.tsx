@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { addRecipeToCollection, createCollection, listCollections, removeRecipeFromCollection } from '../api'
 import type { Collection } from '../types'
 
 interface CollectionPickerProps {
   recipeId: number
   recipeCollections: string[]
+  anchorRect: DOMRect
   onUpdate: () => void
   onClose: () => void
 }
 
-export function CollectionPicker({ recipeId, recipeCollections, onUpdate, onClose }: CollectionPickerProps) {
+export function CollectionPicker({ recipeId, recipeCollections, anchorRect, onUpdate, onClose }: CollectionPickerProps) {
   const [collections, setCollections] = useState<Collection[]>([])
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -26,8 +27,13 @@ export function CollectionPicker({ recipeId, recipeCollections, onUpdate, onClos
         onClose()
       }
     }
+    const handleScroll = () => onClose()
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    window.addEventListener('scroll', handleScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
   }, [onClose])
 
   const isInCollection = (name: string) => (recipeCollections ?? []).includes(name)
@@ -60,8 +66,16 @@ export function CollectionPicker({ recipeId, recipeCollections, onUpdate, onClos
     }
   }
 
-  return (
-    <div className="collection-picker" ref={containerRef} onClick={(e) => e.stopPropagation()}>
+  // Align right edge of picker with right edge of button, open below
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    top: anchorRect.bottom + 4,
+    right: window.innerWidth - anchorRect.right,
+    zIndex: 1000,
+  }
+
+  return createPortal(
+    <div className="collection-picker" ref={containerRef} style={style} onClick={(e) => e.stopPropagation()}>
       <div className="collection-picker-header">Collections</div>
       {collections.length === 0 && (
         <div className="collection-picker-empty">No collections yet</div>
@@ -82,7 +96,6 @@ export function CollectionPicker({ recipeId, recipeCollections, onUpdate, onClos
       </ul>
       <form className="collection-picker-new" onSubmit={handleCreate}>
         <input
-          ref={inputRef}
           type="text"
           placeholder="New collection…"
           value={newName}
@@ -91,6 +104,7 @@ export function CollectionPicker({ recipeId, recipeCollections, onUpdate, onClos
         />
         <button type="submit" disabled={!newName.trim() || creating}>+</button>
       </form>
-    </div>
+    </div>,
+    document.body,
   )
 }
