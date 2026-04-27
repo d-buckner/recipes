@@ -16,8 +16,20 @@ class Tools:
             description="Base URL of the recipes API server (e.g. http://192.168.1.10:8000)",
         )
 
+    class UserValves(BaseModel):
+        api_base_url: str = Field(
+            default="",
+            description="Override the recipes API URL (leave blank to use the admin default)",
+        )
+
     def __init__(self):
         self.valves = self.Valves()
+        self.user_valves = self.UserValves()
+
+    def _api_base_url(self) -> str:
+        if self.user_valves.api_base_url.strip():
+            return self.user_valves.api_base_url.rstrip("/")
+        return self.valves.api_base_url.rstrip("/")
 
     def search_recipes(self, query: str) -> str:
         """
@@ -26,7 +38,7 @@ class Tools:
 
         :param query: Search terms, e.g. "chicken pasta", "vegetarian soup"
         """
-        url = f"{self.valves.api_base_url}/search"
+        url = f"{self._api_base_url()}/search"
         try:
             resp = requests.get(url, params={"q": query, "limit": 10}, timeout=10)
             resp.raise_for_status()
@@ -61,7 +73,7 @@ class Tools:
 
         :param recipe_id: The numeric ID of the recipe (from search results)
         """
-        url = f"{self.valves.api_base_url}/recipes/{recipe_id}"
+        url = f"{self._api_base_url()}/recipes/{recipe_id}"
         try:
             resp = requests.get(url, timeout=10)
             if resp.status_code == 404:
@@ -86,7 +98,7 @@ class Tools:
         """
         try:
             resp = requests.post(
-                f"{self.valves.api_base_url}/favorites/{recipe_id}",
+                f"{self._api_base_url()}/favorites/{recipe_id}",
                 timeout=10,
             )
             if resp.status_code == 404:
@@ -104,7 +116,7 @@ class Tools:
         """
         try:
             resp = requests.delete(
-                f"{self.valves.api_base_url}/favorites/{recipe_id}",
+                f"{self._api_base_url()}/favorites/{recipe_id}",
                 timeout=10,
             )
             resp.raise_for_status()
@@ -117,7 +129,7 @@ class Tools:
         List all favorited recipes.
         """
         try:
-            resp = requests.get(f"{self.valves.api_base_url}/favorites", timeout=10)
+            resp = requests.get(f"{self._api_base_url()}/favorites", timeout=10)
             resp.raise_for_status()
             results = resp.json()
         except Exception as exc:
