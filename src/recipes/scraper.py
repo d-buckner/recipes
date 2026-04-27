@@ -39,6 +39,11 @@ def parse_recipe(html: str, url: str) -> dict:
         return data
 
 
+def _has_recipe_content(data: dict) -> bool:
+    """A saved recipe must have a title and at least ingredients or instructions."""
+    return bool(data.get("title")) and bool(data.get("ingredients") or data.get("instructions"))
+
+
 def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
     """Fetch, parse, and save a single recipe. Returns True on success."""
     attempt = recipe.retry_count + 1
@@ -46,9 +51,12 @@ def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
     try:
         html = fetch_html(recipe.url)
         recipe_json = parse_recipe(html, recipe.url)
-        title = recipe_json.get("title") or "(no title)"
+        if not _has_recipe_content(recipe_json):
+            log.warning("[%d] UNAVAILABLE (no recipe content): %s", recipe.id, recipe.url)
+            db.mark_unavailable(recipe.id, "No recipe content found (possible paywall)")
+            return False
         db.save_recipe(recipe.id, recipe_json)
-        log.info("[%d] OK: %s", recipe.id, title)
+        log.info("[%d] OK: %s", recipe.id, recipe_json["title"])
         return True
     except (NoSchemaFoundInWildMode, RecipeSchemaNotFound) as exc:
         log.warning("[%d] FAIL (no schema): %s", recipe.id, exc)

@@ -210,6 +210,25 @@ def save_recipe(recipe_id: int, recipe_json: dict) -> None:
         )
 
 
+def mark_unavailable(recipe_id: int, error_msg: str) -> None:
+    """
+    Permanently mark a recipe as unavailable (e.g. behind a paywall).
+    Unlike fail_recipe, this never requeues — retrying won't help.
+    """
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE recipes
+            SET status     = 'unavailable',
+                error_msg  = ?,
+                claimed_at = NULL,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (error_msg, recipe_id),
+        )
+
+
 def fail_recipe(recipe_id: int, error_msg: str, max_retries: int = 3) -> None:
     """
     Record a scrape failure. If retry_count < max_retries, requeue as
@@ -318,7 +337,8 @@ def get_stats() -> ScrapeRunStats:
                 SUM(status = 'discovered') AS discovered,
                 SUM(status = 'processing') AS processing,
                 SUM(status = 'complete') AS complete,
-                SUM(status = 'failed') AS failed
+                SUM(status = 'failed') AS failed,
+                SUM(status = 'unavailable') AS unavailable
             FROM recipes
             """
         ).fetchone()
@@ -329,6 +349,7 @@ def get_stats() -> ScrapeRunStats:
             processing=totals["processing"] or 0,
             complete=totals["complete"] or 0,
             failed=totals["failed"] or 0,
+            unavailable=totals["unavailable"] or 0,
             favorites=fav_count,
         )
 

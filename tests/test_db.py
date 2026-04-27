@@ -58,6 +58,17 @@ def test_save_recipe(mem_db):
     assert saved.recipe_json["title"] == "Chicken Soup"
 
 
+def test_mark_unavailable(mem_db):
+    db.insert_discovered_urls([("https://example.com/recipes/paywalled", "example.com")])
+    recipe = db.claim_next_url()
+    db.mark_unavailable(recipe.id, "No recipe content found (possible paywall)")
+
+    saved = db.get_recipe_by_id(recipe.id)
+    assert saved.status.value == "unavailable"
+    assert saved.retry_count == 0  # not incremented — no retries
+    assert "paywall" in saved.error_msg
+
+
 def test_fail_recipe_requeues_before_max_retries(mem_db):
     db.insert_discovered_urls([("https://example.com/recipes/soup", "example.com")])
     recipe = db.claim_next_url()
@@ -122,4 +133,15 @@ def test_get_stats(mem_db):
     assert stats.total == 2
     assert stats.discovered == 2
     assert stats.complete == 0
+    assert stats.unavailable == 0
     assert stats.favorites == 0
+
+
+def test_get_stats_counts_unavailable(mem_db):
+    db.insert_discovered_urls([("https://example.com/recipes/paywalled", "example.com")])
+    recipe = db.claim_next_url()
+    db.mark_unavailable(recipe.id, "No recipe content found (possible paywall)")
+
+    stats = db.get_stats()
+    assert stats.unavailable == 1
+    assert stats.failed == 0

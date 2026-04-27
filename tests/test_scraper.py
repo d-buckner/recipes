@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import responses as rsps_lib
 import pytest
 
@@ -59,6 +61,23 @@ def test_process_one_no_schema(mem_db):
     failed = db.get_recipe_by_id(recipe.id)
     assert failed.status.value == "failed"
     assert failed.retry_count == 1
+
+
+@rsps_lib.activate
+def test_process_one_paywall_marks_unavailable(mem_db):
+    """A page that parses but has no ingredients/instructions (e.g. paywall) is marked unavailable."""
+    db.insert_discovered_urls([("https://example.com/recipes/paywalled", "example.com")])
+    recipe = db.claim_next_url()
+
+    paywall_result = {"title": "Fancy Recipe", "ingredients": [], "instructions": ""}
+    rsps_lib.add(rsps_lib.GET, recipe.url, body="<html>subscribe to read</html>", status=200)
+    with patch("recipes.scraper.parse_recipe", return_value=paywall_result):
+        success = process_one(recipe)
+
+    assert success is False
+    saved = db.get_recipe_by_id(recipe.id)
+    assert saved.status.value == "unavailable"
+    assert saved.retry_count == 0  # not incremented
 
 
 @rsps_lib.activate

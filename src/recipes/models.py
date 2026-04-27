@@ -8,6 +8,7 @@ class RecipeStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETE = "complete"
     FAILED = "failed"
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass
@@ -53,4 +54,5 @@ class ScrapeRunStats:
     processing: int
     complete: int
     failed: int
+    unavailable: int
     favorites: int
