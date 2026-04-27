@@ -11,7 +11,7 @@ interface RecipeGridProps {
   emptyTitle: string
   emptyBody: string
   onFavorite: (id: number, isFavorite: boolean) => void
-  onCollectionUpdate: () => void
+  onRemoveFromCollection?: (id: number) => void
 }
 
 export function RecipeGrid({
@@ -24,7 +24,7 @@ export function RecipeGrid({
   emptyTitle,
   emptyBody,
   onFavorite,
-  onCollectionUpdate,
+  onRemoveFromCollection,
 }: RecipeGridProps) {
   // Show spinner only when loading with nothing to display yet.
   // When there are stale results, keep the grid mounted (dimmed) to avoid
@@ -56,7 +56,7 @@ export function RecipeGrid({
             key={recipe.id}
             recipe={recipe}
             onFavorite={onFavorite}
-            onCollectionUpdate={onCollectionUpdate}
+            onRemoveFromCollection={onRemoveFromCollection}
           />
         ))}
       </div>

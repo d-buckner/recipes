@@ -293,6 +293,20 @@ def search_recipes(query: str, limit: int = 20, offset: int = 0) -> list[SearchR
         return [_row_to_search_result(r) for r in rows]
 
 
+def get_recipe_collection_names(recipe_id: int) -> list[str]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.name FROM collections c
+            JOIN collection_recipes cr ON cr.collection_id = c.id
+            WHERE cr.recipe_id = ?
+            ORDER BY c.name
+            """,
+            (recipe_id,),
+        ).fetchall()
+        return [row["name"] for row in rows]
+
+
 def get_recipe_by_id(recipe_id: int) -> RecipeRow | None:
     with get_conn() as conn:
         row = conn.execute(

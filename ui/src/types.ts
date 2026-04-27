@@ -41,6 +41,7 @@ export interface RecipeDetail {
   site: string
   status: string
   recipe_json: RecipeJson | null
+  collections: string[]
 }
 
 export interface ScrapeRunStats {

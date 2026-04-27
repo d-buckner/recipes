@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { addFavorite, getRecipe, removeFavorite } from '../api'
-import type { RecipeDetail } from '../types'
+import { addFavorite, getRecipe, listCollections, removeFavorite, removeRecipeFromCollection } from '../api'
+import { CollectionPicker } from '../components/CollectionPicker'
+import type { Collection, RecipeDetail } from '../types'
 
 function formatTime(minutes: number): string {
   if (minutes < 60) return `${minutes} min`
@@ -16,18 +17,42 @@ export function RecipePage() {
   const [recipe, setRecipe] = useState<RecipeDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [fav, setFav] = useState(false)
+  const [collections, setCollections] = useState<string[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [allCollections, setAllCollections] = useState<Collection[]>([])
+  const pickerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!id) return
     getRecipe(Number(id))
       .then((r) => {
         setRecipe(r)
-        // is_favorite not on RecipeDetail — would need to check via another route
-        // For now just default false; grid keeps its own state
+        setCollections(r.collections)
       })
       .catch(() => navigate('/'))
       .finally(() => setLoading(false))
+    listCollections().then(setAllCollections).catch(() => null)
   }, [id, navigate])
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!pickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [pickerOpen])
+
+  const handleRemoveFromCollection = async (collectionName: string) => {
+    if (!recipe) return
+    const col = allCollections.find((c) => c.name === collectionName)
+    if (!col) return
+    await removeRecipeFromCollection(col.id, recipe.id)
+    setCollections((prev) => prev.filter((n) => n !== collectionName))
+  }
 
   const handleFav = async () => {
     if (!recipe) return
@@ -98,11 +123,27 @@ export function RecipePage() {
         <div className="recipe-page-actions">
           <button
             onClick={handleFav}
-            className={`btn${fav ? ' ghost' : ' ghost'}`}
+            className="btn ghost"
             style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1.5px solid var(--border)' }}
           >
             {fav ? '❤️ Saved' : '🤍 Save'}
           </button>
+          <div className="recipe-collection-wrap" ref={pickerRef}>
+            <button
+              className="btn ghost"
+              style={{ border: '1.5px solid var(--border)' }}
+              onClick={() => setPickerOpen((o) => !o)}
+            >
+              📁 Add to collection
+            </button>
+            {pickerOpen && (
+              <CollectionPicker
+                recipeId={recipe!.id}
+                recipeCollections={collections}
+                onUpdate={setCollections}
+              />
+            )}
+          </div>
           <a
             href={recipe?.url}
             target="_blank"
@@ -112,6 +153,23 @@ export function RecipePage() {
             View Original ↗
           </a>
         </div>
+
+        {collections.length > 0 && (
+          <div className="recipe-page-collections">
+            {collections.map((name) => (
+              <span key={name} className="collection-chip">
+                {name}
+                <button
+                  className="collection-chip-remove"
+                  onClick={() => handleRemoveFromCollection(name)}
+                  title={`Remove from ${name}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         {rj.description && (
           <p className="recipe-page-desc">{rj.description}</p>

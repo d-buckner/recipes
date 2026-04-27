@@ -9,8 +9,10 @@ import {
   listCollections,
   listRecipes,
   removeFavorite,
+  removeRecipeFromCollection,
   searchRecipes,
 } from '../api'
+
 import { AddSiteModal } from '../components/AddSiteModal'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
@@ -154,23 +156,6 @@ export function HomePage() {
     refreshStats()
   }
 
-  // Re-fetch current recipe list so collection badges stay current
-  const handleCollectionUpdate = async () => {
-    if (tab === 'explore') {
-      const results = query.trim()
-        ? await searchRecipes(query, LIMIT * (page + 1), 0)
-        : await listRecipes(LIMIT * (page + 1), 0)
-      setRecipes(results)
-    } else if (tab === 'favorites') {
-      const results = await getFavorites()
-      setRecipes(results)
-    } else if (tab === 'collections' && selectedCollection) {
-      const results = await listCollectionRecipes(selectedCollection.id, LIMIT * (page + 1), 0)
-      setRecipes(results)
-    }
-    refreshCollections()
-  }
-
   const handleTabChange = (next: Tab) => {
     setTab(next)
     setRecipes([])
@@ -198,6 +183,12 @@ export function HomePage() {
     e.stopPropagation()
     await deleteCollection(id)
     refreshCollections()
+  }
+
+  const handleRemoveFromCollection = async (recipeId: number) => {
+    if (!selectedCollection) return
+    await removeRecipeFromCollection(selectedCollection.id, recipeId)
+    setRecipes((prev) => prev.filter((r) => r.id !== recipeId))
   }
 
   const emptyState = tab === 'favorites'
@@ -305,7 +296,7 @@ export function HomePage() {
           emptyTitle={emptyState.title}
           emptyBody={emptyState.body}
           onFavorite={handleFavorite}
-          onCollectionUpdate={handleCollectionUpdate}
+          onRemoveFromCollection={selectedCollection ? handleRemoveFromCollection : undefined}
         />
       )}
 

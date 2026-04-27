@@ -46,6 +46,12 @@ export async function getSites(): Promise<string[]> {
   return res.json() as Promise<string[]>
 }
 
+export async function getSupportedSites(): Promise<string[]> {
+  const res = await fetch(`${BASE}/sites/supported`)
+  if (!res.ok) throw new Error('Failed to fetch supported sites')
+  return res.json() as Promise<string[]>
+}
+
 export async function discoverSite(siteUrl: string, sitemapUrl?: string): Promise<DiscoverResponse> {
   const res = await fetch(`${BASE}/sites/discover`, {
     method: 'POST',

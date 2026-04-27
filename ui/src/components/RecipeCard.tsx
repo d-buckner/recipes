@@ -1,13 +1,12 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import type { SearchResult } from '../types'
-import { CollectionPicker } from './CollectionPicker'
 
 interface RecipeCardProps {
   recipe: SearchResult
   onFavorite: (id: number, isFavorite: boolean) => void
-  onCollectionUpdate: () => void
+  onRemoveFromCollection?: (id: number) => void
 }
 
 function formatTime(minutes: number): string {
@@ -20,10 +19,8 @@ function formatTime(minutes: number): string {
 const FADE_IN_STYLE: CSSProperties = { opacity: 0, transition: 'opacity 0.3s ease' }
 const FADE_IN_LOADED_STYLE: CSSProperties = { opacity: 1, transition: 'opacity 0.3s ease' }
 
-export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCardProps) {
-  const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null)
+export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection }: RecipeCardProps) {
   const [imgLoaded, setImgLoaded] = useState(false)
-  const folderBtnRef = useRef<HTMLButtonElement>(null)
 
   const imageSrc = recipe.has_thumbnail
     ? `/api/recipes/${recipe.id}/thumbnail`
@@ -35,20 +32,8 @@ export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCar
     onFavorite(recipe.id, recipe.is_favorite)
   }
 
-  const handleFolderClick = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (pickerAnchor) {
-      setPickerAnchor(null)
-      return
-    }
-    const rect = folderBtnRef.current?.getBoundingClientRect()
-    if (rect) setPickerAnchor(rect)
-  }
-
   return (
-    <>
-      <Link
+    <Link
         to={`/recipe/${recipe.site}/${recipe.id}`}
         className="recipe-card"
       >
@@ -82,14 +67,6 @@ export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCar
           >
             {recipe.is_favorite ? '❤️' : '🤍'}
           </button>
-          <button
-            ref={folderBtnRef}
-            className="card-collection-btn"
-            onClick={handleFolderClick}
-            title="Add to collection"
-          >
-            📁
-          </button>
         </div>
 
         <div className="card-body">
@@ -103,10 +80,25 @@ export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCar
               <span className="card-time">🍽 {recipe.yields}</span>
             )}
           </div>
-          {(recipe.collections ?? []).length > 0 && (
+          {recipe.collections.length > 0 && (
             <div className="card-collections">
-              {(recipe.collections ?? []).map((name) => (
-                <span key={name} className="collection-chip">{name}</span>
+              {recipe.collections.map((name) => (
+                <span key={name} className="collection-chip">
+                  {name}
+                  {onRemoveFromCollection && (
+                    <button
+                      className="collection-chip-remove"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onRemoveFromCollection(recipe.id)
+                      }}
+                      title={`Remove from ${name}`}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
               ))}
             </div>
           )}
@@ -114,17 +106,6 @@ export function RecipeCard({ recipe, onFavorite, onCollectionUpdate }: RecipeCar
             <div className="card-desc">{recipe.description}</div>
           )}
         </div>
-      </Link>
-
-      {pickerAnchor && (
-        <CollectionPicker
-          recipeId={recipe.id}
-          recipeCollections={recipe.collections}
-          anchorRect={pickerAnchor}
-          onUpdate={onCollectionUpdate}
-          onClose={() => setPickerAnchor(null)}
-        />
-      )}
-    </>
+    </Link>
   )
 }

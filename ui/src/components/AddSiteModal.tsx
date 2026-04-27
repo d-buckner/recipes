@@ -1,23 +1,32 @@
-import { useEffect, useState } from 'react'
-import { discoverSite, getSites, startScrape } from '../api'
-import type { DiscoverResponse } from '../types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { discoverSite, getSites, getSupportedSites, startScrape } from '../api'
 
 interface AddSiteModalProps {
   onClose: () => void
   onDiscovered: () => void
 }
 
+type ModalStatus = 'idle' | 'running' | 'done' | 'error'
+
 export function AddSiteModal({ onClose, onDiscovered }: AddSiteModalProps) {
-  const [siteUrl, setSiteUrl] = useState('')
-  const [sitemapUrl, setSitemapUrl] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<DiscoverResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [scrapeStarted, setScrapeStarted] = useState(false)
-  const [existingSites, setExistingSites] = useState<string[]>([])
+  const [inputValue, setInputValue] = useState('')
+  const [selectedHost, setSelectedHost] = useState('')
+  const [open, setOpen] = useState(false)
+  const [activeIdx, setActiveIdx] = useState(-1)
+  const [supportedSites, setSupportedSites] = useState<string[]>([])
+  const [indexedSites, setIndexedSites] = useState<Set<string>>(new Set())
+  const [status, setStatus] = useState<ModalStatus>('idle')
+  const [discovered, setDiscovered] = useState(0)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [addedSite, setAddedSite] = useState('')
+
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    getSites().then(setExistingSites).catch(() => null)
+    getSupportedSites().then(setSupportedSites).catch(() => null)
+    getSites().then((sites) => setIndexedSites(new Set(sites))).catch(() => null)
   }, [])
 
   useEffect(() => {
@@ -26,28 +35,88 @@ export function AddSiteModal({ onClose, onDiscovered }: AddSiteModalProps) {
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const handleDiscover = async () => {
-    if (!siteUrl.trim()) return
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    try {
-      const res = await discoverSite(siteUrl.trim(), sitemapUrl.trim() || undefined)
-      setResult(res)
-      onDiscovered()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Discovery failed')
-    } finally {
-      setLoading(false)
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = inputValue.toLowerCase().trim()
+    if (!q) return supportedSites.slice(0, 80)
+    return supportedSites.filter((s) => s.includes(q)).slice(0, 80)
+  }, [inputValue, supportedSites])
+
+  const handleInputChange = (val: string) => {
+    setInputValue(val)
+    setSelectedHost('')
+    setOpen(true)
+    setActiveIdx(-1)
+  }
+
+  const handleSelect = (host: string) => {
+    setInputValue(host)
+    setSelectedHost(host)
+    setOpen(false)
+    setActiveIdx(-1)
+    inputRef.current?.focus()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open) {
+      if (e.key === 'ArrowDown') { setOpen(true); setActiveIdx(0) }
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIdx((i) => Math.min(i + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIdx((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (activeIdx >= 0 && filtered[activeIdx]) {
+        handleSelect(filtered[activeIdx])
+      } else {
+        setOpen(false)
+        void handleAdd()
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false)
     }
   }
 
-  const handleScrape = async () => {
-    await startScrape()
-    setScrapeStarted(true)
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (activeIdx < 0 || !listRef.current) return
+    const el = listRef.current.children[activeIdx] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [activeIdx])
+
+  const handleAdd = async () => {
+    const host = selectedHost || inputValue.trim()
+    if (!host || status === 'running') return
+    const url = host.startsWith('http') ? host : `https://${host}`
+    setAddedSite(host)
+    setStatus('running')
+    try {
+      const res = await discoverSite(url)
+      await startScrape()
+      setDiscovered(res.discovered)
+      setStatus('done')
+      onDiscovered()
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Something went wrong')
+      setStatus('error')
+    }
   }
 
-  const canSubmit = siteUrl.trim().length > 0 && !loading
+  const canAdd = (selectedHost || inputValue.trim()).length > 0 && status === 'idle'
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -58,85 +127,90 @@ export function AddSiteModal({ onClose, onDiscovered }: AddSiteModalProps) {
         </div>
 
         <div className="add-site-form">
-          {existingSites.length > 0 && (
-            <div>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 600 }}>
-                Currently indexed sites
-              </p>
-              <ul className="sites-list">
-                {existingSites.map((s) => <li key={s}>{s}</li>)}
-              </ul>
-            </div>
-          )}
+          {status === 'idle' || status === 'running' ? (
+            <>
+              <div className="form-field" ref={containerRef}>
+                <label htmlFor="site-search">Recipe site</label>
+                <div className="site-combobox">
+                  <input
+                    ref={inputRef}
+                    id="site-search"
+                    type="text"
+                    className="site-combobox-input"
+                    placeholder="Search 500+ supported sites…"
+                    value={inputValue}
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={status === 'running'}
+                    onChange={(e) => handleInputChange(e.target.value)}
+                    onFocus={() => setOpen(true)}
+                    onKeyDown={handleKeyDown}
+                  />
+                  {open && filtered.length > 0 && (
+                    <ul ref={listRef} className="site-dropdown" role="listbox">
+                      {filtered.map((host, i) => (
+                        <li
+                          key={host}
+                          role="option"
+                          className={[
+                            'site-dropdown-item',
+                            i === activeIdx ? 'is-active' : '',
+                            indexedSites.has(host) ? 'is-indexed' : '',
+                          ].filter(Boolean).join(' ')}
+                          onMouseDown={(e) => { e.preventDefault(); handleSelect(host) }}
+                          onMouseEnter={() => setActiveIdx(i)}
+                        >
+                          <span className="site-dropdown-host">{host}</span>
+                          {indexedSites.has(host) && (
+                            <span className="site-dropdown-badge">indexed</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <span className="hint">
+                  {supportedSites.length > 0
+                    ? `${supportedSites.length} sites supported`
+                    : 'Loading supported sites…'}
+                </span>
+              </div>
 
-          <div className="form-field">
-            <label htmlFor="site-url">Site URL *</label>
-            <input
-              id="site-url"
-              type="url"
-              placeholder="https://www.seriouseats.com"
-              value={siteUrl}
-              onChange={(e) => setSiteUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleDiscover() }}
-              disabled={loading}
-            />
-            <span className="hint">Homepage of the recipe site. Used for automatic sitemap discovery.</span>
-          </div>
+              {status === 'running' && (
+                <div className="add-site-progress">
+                  <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2, marginBottom: 0 }} />
+                  <span>Scanning sitemaps on <strong>{addedSite}</strong>… this may take a minute</span>
+                </div>
+              )}
 
-          <div className="form-field">
-            <label htmlFor="sitemap-url">Sitemap URL (optional)</label>
-            <input
-              id="sitemap-url"
-              type="url"
-              placeholder="https://www.seriouseats.com/sitemap_1.xml"
-              value={sitemapUrl}
-              onChange={(e) => setSitemapUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleDiscover() }}
-              disabled={loading}
-            />
-            <span className="hint">Provide a specific sitemap XML to skip homepage crawling.</span>
-          </div>
-
-          {error && (
-            <div className="discover-error">
-              ⚠️ {error}
-            </div>
-          )}
-
-          {result && (
-            <div className="discover-result">
-              <div className="result-count">{result.discovered.toLocaleString()} URLs discovered</div>
-              <p>
-                Found <strong>{result.discovered}</strong> new recipe URLs from <strong>{result.site}</strong>.
-                {result.discovered === 0 && ' All URLs may already be in the database.'}
-              </p>
-              {result.discovered > 0 && !scrapeStarted && (
-                <button
-                  className="btn primary"
-                  style={{ marginTop: '10px' }}
-                  onClick={handleScrape}
-                >
-                  ⚙️ Start Scraping Now
+              <div className="form-actions">
+                <button className="btn ghost" onClick={onClose}>Cancel</button>
+                <button className="btn primary" onClick={handleAdd} disabled={!canAdd}>
+                  Add Site
                 </button>
-              )}
-              {scrapeStarted && (
-                <p style={{ marginTop: '8px', fontWeight: 600 }}>
-                  ✅ Scraping started in background! Check stats for progress.
-                </p>
-              )}
+              </div>
+            </>
+          ) : status === 'done' ? (
+            <div className="add-site-result">
+              <div className="add-site-result-icon">✓</div>
+              <div>
+                <strong>{addedSite}</strong> added.{' '}
+                {discovered > 0
+                  ? <>{discovered.toLocaleString()} URLs queued — scraping in the background.</>
+                  : <>No new URLs found (all may already be indexed).</>}
+              </div>
+              <button className="btn primary" style={{ marginTop: 12 }} onClick={onClose}>Done</button>
+            </div>
+          ) : (
+            <div className="add-site-error">
+              <strong>Failed to add {addedSite}</strong>
+              <p>{errorMsg}</p>
+              <div className="form-actions" style={{ marginTop: 8 }}>
+                <button className="btn ghost" onClick={onClose}>Cancel</button>
+                <button className="btn primary" onClick={() => setStatus('idle')}>Try Again</button>
+              </div>
             </div>
           )}
-
-          <div className="form-actions">
-            <button className="btn ghost" onClick={onClose}>Cancel</button>
-            <button
-              className="btn primary"
-              onClick={handleDiscover}
-              disabled={!canSubmit}
-            >
-              {loading ? 'Discovering…' : '🔍 Discover Recipes'}
-            </button>
-          </div>
         </div>
       </div>
     </div>

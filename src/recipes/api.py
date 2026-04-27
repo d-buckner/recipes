@@ -35,6 +35,7 @@ class RecipeResponse(BaseModel):
     site: str
     status: str
     recipe_json: dict | None = None
+    collections: list[str] = []
 
 
 class FavoriteResponse(BaseModel):
@@ -96,6 +97,7 @@ def get_recipe(recipe_id: int) -> RecipeResponse:
         site=recipe.site,
         status=recipe.status.value,
         recipe_json=recipe.recipe_json,
+        collections=db.get_recipe_collection_names(recipe.id),
     )
 
 
@@ -139,6 +141,12 @@ def get_stats() -> ScrapeRunStats:
 @app.get("/sites", response_model=list[str])
 def list_sites() -> list[str]:
     return db.list_sites()
+
+
+@app.get("/sites/supported", response_model=list[str])
+def list_supported_sites() -> list[str]:
+    from recipe_scrapers import SCRAPERS
+    return sorted(SCRAPERS.keys())
 
 
 @app.post("/sites/discover", response_model=DiscoverResponse)
