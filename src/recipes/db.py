@@ -218,7 +218,9 @@ def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = Non
     # Remove the external image URL when we have a locally stored copy so the
     # API response doesn't reference external resources.
     stored_json = dict(recipe_json)
-    if image is not None:
+    # Strip the external image URL if we have a local copy, or if it's null/empty (useless noise).
+    # Keep it only when it's a real URL and the local download failed, so the frontend can fall back.
+    if image is not None or not stored_json.get("image"):
         stored_json.pop("image", None)
 
     title = stored_json.get("title", "")
