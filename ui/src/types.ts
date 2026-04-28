@@ -62,6 +62,8 @@ export interface RecipeDetail {
   status: string
   recipe_json: RecipeJson | null
   collections: string[]
+  has_thumbnail: boolean
+  has_image: boolean
 }
 
 export interface ScrapeRunStats {

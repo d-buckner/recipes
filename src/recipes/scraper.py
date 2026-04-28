@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 CLAIM_TIMEOUT = 60  # seconds before a stale processing item is reclaimed (2x fetch timeout)
 MAX_RETRIES = 3
 THUMBNAIL_WIDTH = 480
+HERO_WIDTH = 1200
 
 
 def fetch_html(url: str) -> str:
@@ -56,28 +57,37 @@ def parse_recipe(html: str, url: str) -> dict:
     return data
 
 
-def make_thumbnail(image_url: str) -> bytes | None:
+def _resize_to_jpeg(img: Image.Image, max_width: int) -> bytes:
+    """Resize a PIL image to at most max_width wide and return JPEG bytes."""
+    w, h = img.size
+    if w > max_width:
+        new_h = int(h * max_width / w)
+        img = img.resize((max_width, new_h), Image.LANCZOS)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=82, optimize=True)
+    return buf.getvalue()
+
+
+def download_images(image_url: str) -> tuple[bytes | None, bytes | None]:
     """
-    Download an image and resize it to a THUMBNAIL_WIDTH-wide JPEG.
-    Returns None on any failure — thumbnail generation is best-effort.
+    Download an image and produce (thumbnail, hero) JPEG bytes.
+    thumbnail: THUMBNAIL_WIDTH px wide — for card display.
+    hero:      HERO_WIDTH px wide — for recipe detail page.
+    Returns (None, None) on any failure — image download is best-effort.
     """
     try:
         resp = requests.get(image_url, headers={"User-Agent": settings.user_agent}, timeout=10)
         resp.raise_for_status()
         img = Image.open(io.BytesIO(resp.content))
         img.load()  # read data before BytesIO goes out of scope
-        w, h = img.size
-        if w > THUMBNAIL_WIDTH:
-            new_h = int(h * THUMBNAIL_WIDTH / w)
-            img = img.resize((THUMBNAIL_WIDTH, new_h), Image.LANCZOS)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=82, optimize=True)
-        return buf.getvalue()
+        thumbnail = _resize_to_jpeg(img, THUMBNAIL_WIDTH)
+        hero = _resize_to_jpeg(img, HERO_WIDTH)
+        return thumbnail, hero
     except Exception as exc:
-        log.debug("  thumbnail failed for %s: %s", image_url, exc)
-        return None
+        log.debug("  image download failed for %s: %s", image_url, exc)
+        return None, None
 
 
 def _has_recipe_content(data: dict) -> bool:
@@ -96,8 +106,8 @@ def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
             log.warning("[%d] UNAVAILABLE (no recipe content): %s", recipe.id, recipe.url)
             db.mark_unavailable(recipe.id, "No recipe content found (possible paywall)")
             return False
-        thumbnail = make_thumbnail(recipe_json["image"]) if recipe_json.get("image") else None
-        db.save_recipe(recipe.id, recipe_json, thumbnail)
+        thumbnail, hero = download_images(recipe_json["image"]) if recipe_json.get("image") else (None, None)
+        db.save_recipe(recipe.id, recipe_json, thumbnail, hero)
         log.info("[%d] OK: %s", recipe.id, recipe_json["title"])
         return True
     except (NoSchemaFoundInWildMode, RecipeSchemaNotFound) as exc:

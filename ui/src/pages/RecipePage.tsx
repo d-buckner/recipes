@@ -107,8 +107,12 @@ export function RecipePage() {
         <span className="recipe-page-breadcrumb">{recipe?.site}</span>
       </header>
 
-      {rj.image && (
-        <img className="recipe-page-hero" src={rj.image} alt={rj.title} />
+      {(recipe?.has_image || rj.image) && (
+        <img
+          className="recipe-page-hero"
+          src={recipe?.has_image ? `/api/recipes/${recipe.id}/image` : rj.image!}
+          alt={rj.title}
+        />
       )}
 
       <div className="recipe-page-content">

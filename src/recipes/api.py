@@ -36,6 +36,8 @@ class RecipeResponse(BaseModel):
     status: str
     recipe_json: dict | None = None
     collections: list[str] = []
+    has_thumbnail: bool = False
+    has_image: bool = False
 
 
 class FavoriteResponse(BaseModel):
@@ -99,6 +101,7 @@ def get_recipe(recipe_id: int) -> RecipeResponse:
     recipe = db.get_recipe_by_id(recipe_id)
     if recipe is None:
         raise HTTPException(status_code=404, detail="Recipe not found")
+    has_thumbnail, has_image = db.get_image_flags(recipe_id)
     return RecipeResponse(
         id=recipe.id,
         url=recipe.url,
@@ -106,6 +109,8 @@ def get_recipe(recipe_id: int) -> RecipeResponse:
         status=recipe.status.value,
         recipe_json=recipe.recipe_json,
         collections=db.get_recipe_collection_names(recipe.id),
+        has_thumbnail=has_thumbnail,
+        has_image=has_image,
     )
 
 
@@ -114,6 +119,18 @@ def get_thumbnail(recipe_id: int) -> Response:
     data = db.get_thumbnail(recipe_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "max-age=31536000, immutable"},
+    )
+
+
+@app.get("/recipes/{recipe_id}/image")
+def get_image(recipe_id: int) -> Response:
+    data = db.get_image(recipe_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Image not found")
     return Response(
         content=data,
         media_type="image/jpeg",

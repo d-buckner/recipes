@@ -114,6 +114,7 @@ _MIGRATIONS = [
     "ALTER TABLE recipes ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE recipes ADD COLUMN claimed_at TEXT",
     "ALTER TABLE recipes ADD COLUMN thumbnail BLOB",
+    "ALTER TABLE recipes ADD COLUMN image BLOB",
 ]
 
 
@@ -213,7 +214,7 @@ def claim_next_url(claim_timeout: int = 300) -> RecipeRow | None:
         return _row_to_recipe(row)
 
 
-def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = None) -> None:
+def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = None, image: bytes | None = None) -> None:
     title = recipe_json.get("title", "")
     description = recipe_json.get("description", "") or ""
     ingredients = " ".join(recipe_json.get("ingredients", []) or [])
@@ -223,10 +224,10 @@ def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = Non
         conn.execute(
             """
             UPDATE recipes
-            SET status = 'complete', recipe_json = ?, thumbnail = ?, updated_at = datetime('now')
+            SET status = 'complete', recipe_json = ?, thumbnail = ?, image = ?, updated_at = datetime('now')
             WHERE id = ?
             """,
-            (json.dumps(recipe_json), thumbnail, recipe_id),
+            (json.dumps(recipe_json), thumbnail, image, recipe_id),
         )
         conn.execute(
             "INSERT OR REPLACE INTO recipe_fts (id, title, description, ingredients, keywords) VALUES (?, ?, ?, ?, ?)",
@@ -242,6 +243,28 @@ def get_thumbnail(recipe_id: int) -> bytes | None:
         if row is None:
             return None
         return row["thumbnail"]
+
+
+def get_image(recipe_id: int) -> bytes | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT image FROM recipes WHERE id = ?", (recipe_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return row["image"]
+
+
+def get_image_flags(recipe_id: int) -> tuple[bool, bool]:
+    """Return (has_thumbnail, has_image) for a recipe without loading the blobs."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT (thumbnail IS NOT NULL) AS has_thumbnail, (image IS NOT NULL) AS has_image FROM recipes WHERE id = ?",
+            (recipe_id,),
+        ).fetchone()
+        if row is None:
+            return False, False
+        return bool(row["has_thumbnail"]), bool(row["has_image"])
 
 
 def mark_unavailable(recipe_id: int, error_msg: str) -> None:
