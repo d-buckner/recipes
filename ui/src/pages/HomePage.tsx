@@ -20,6 +20,7 @@ import { AddSiteDropdown } from '../components/AddSiteDropdown'
 import { FilterPanel } from '../components/FilterPanel'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
+import { SettingsModal } from '../components/SettingsModal'
 import type { Collection, SearchResult, ScrapeRunStats, TagFilter, TagFilterType } from '../types'
 
 type ToastState =
@@ -49,6 +50,7 @@ export function HomePage() {
   const [hasMore, setHasMore] = useState(false)
   const [showAddSite, setShowAddSite] = useState(false)
   const [showFilterPanel, setShowFilterPanel] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [stats, setStats] = useState<ScrapeRunStats | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
 
@@ -277,7 +279,15 @@ export function HomePage() {
             />
           )}
         </div>
+        <button className="btn-settings" onClick={() => setShowSettings(true)} title="Settings">⚙</button>
       </header>
+
+      {showSettings && (
+        <SettingsModal
+          stats={stats}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
 
       <nav className="tabs">
         <div className="tabs-row">

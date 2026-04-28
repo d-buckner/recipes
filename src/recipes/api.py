@@ -196,6 +196,13 @@ def start_scrape(background_tasks: BackgroundTasks) -> dict[str, str]:
     return {"status": "started"}
 
 
+@app.post("/sites/rescrape")
+def rescrape_all(background_tasks: BackgroundTasks) -> dict:
+    queued = db.reset_complete_to_discovered()
+    background_tasks.add_task(scraper.run_workers)
+    return {"status": "started", "queued": queued}
+
+
 def _collection_to_response(c: Collection) -> CollectionResponse:
     return CollectionResponse(id=c.id, name=c.name, recipe_count=c.recipe_count, created_at=c.created_at)
 

@@ -86,6 +86,12 @@ export async function startScrape(): Promise<void> {
   await fetch(`${BASE}/sites/scrape`, { method: 'POST' })
 }
 
+export async function rescrapeAll(): Promise<{ status: string; queued: number }> {
+  const res = await fetch(`${BASE}/sites/rescrape`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to start rescrape')
+  return res.json() as Promise<{ status: string; queued: number }>
+}
+
 export async function listCollections(): Promise<Collection[]> {
   const res = await fetch(`${BASE}/collections`)
   if (!res.ok) throw new Error('Failed to fetch collections')

@@ -1680,6 +1680,121 @@ a.recipe-card {
   border-color: transparent;
 }
 
+/* ── Settings button ── */
+.btn-settings {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+  font-size: 17px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn-settings:hover {
+  background: var(--bg);
+  color: var(--text);
+  border-color: #bbb;
+}
+
+/* ── Settings modal body ── */
+.settings-body {
+  padding: 4px 0 8px;
+}
+
+.settings-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+}
+
+.settings-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.settings-stats {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.settings-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-stat-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+}
+
+.settings-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.settings-stat--active .settings-stat-value { color: #92400e; }
+.settings-stat--warn .settings-stat-value { color: #dc2626; }
+
+.settings-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-action-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-action-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.settings-action-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.settings-action-confirm {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.settings-action-done {
+  font-size: 13px;
+  font-weight: 600;
+  color: #16a34a;
+  white-space: nowrap;
+}
+
 /* ── Toast ── */
 .toast {
   position: fixed;

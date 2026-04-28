@@ -154,6 +154,24 @@ def init_db(db_path: str | None = None) -> None:
     _migrate_list_fields()
 
 
+def reset_complete_to_discovered() -> int:
+    """
+    Reset all completed recipes back to discovered for re-scraping.
+    Clears retry_count so previously-failed content gets another chance.
+    Returns the number of rows reset.
+    """
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE recipes
+            SET status = 'discovered', retry_count = 0, error_msg = NULL,
+                claimed_at = NULL, updated_at = datetime('now')
+            WHERE status = 'complete'
+            """
+        )
+        return cursor.rowcount
+
+
 def reset_stale_processing() -> int:
     """
     Reset any 'processing' rows back to 'discovered'.
