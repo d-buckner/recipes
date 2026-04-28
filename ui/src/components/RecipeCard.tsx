@@ -93,7 +93,7 @@ export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection, onTagFi
             const contentTags: { type: TagFilterType; value: string; label: string }[] = [
               ...recipe.categories.map((v) => ({ type: 'category' as TagFilterType, value: v, label: `📂 ${v}` })),
               ...recipe.cuisines.map((v) => ({ type: 'cuisine' as TagFilterType, value: v, label: `🗺 ${v}` })),
-              ...(recipe.author ? [{ type: 'author' as TagFilterType, value: recipe.author, label: `👤 ${recipe.author}` }] : []),
+              ...(recipe.author && recipe.author.trim().toLowerCase() !== (recipe.site_name ?? '').trim().toLowerCase() ? [{ type: 'author' as TagFilterType, value: recipe.author, label: `👤 ${recipe.author}` }] : []),
             ].filter((tag) => activeFilters?.[tag.type] !== tag.value)
             const visibleTags = contentTags.slice(0, 2)
             if (hideSite && visibleTags.length === 0) return null

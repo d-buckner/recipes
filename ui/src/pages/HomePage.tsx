@@ -62,7 +62,6 @@ export function HomePage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addSiteAnchorRef = useRef<HTMLDivElement>(null)
-  const filterAnchorRef = useRef<HTMLDivElement>(null)
 
   const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
@@ -268,7 +267,7 @@ export function HomePage() {
     <>
       <header className="header">
         <span className="logo">🍴 Recipes</span>
-        <SearchBar value={query} onChange={setQuery} disabled={tab !== 'explore'} />
+        <SearchBar value={query} onChange={setQuery} disabled={tab !== 'explore'} placeholder={tab !== 'explore' ? 'Search available on Explore' : undefined} />
         <div className="add-site-anchor" ref={addSiteAnchorRef}>
           <button className="btn-add" onClick={() => setShowAddSite((v) => !v)}>+ Add Site</button>
           {showAddSite && (
@@ -301,48 +300,55 @@ export function HomePage() {
             📁 Collections{collections.length > 0 ? ` (${collections.length})` : ''}
           </button>
 
-          {activeFilterCount > 0 && (
-            <>
-              {(Object.entries(activeFilters) as [TagFilterType, string][]).map(([type, value]) => (
-                <span key={type} className="active-filter-chip">
-                  {FILTER_EMOJI[type]} {value}
-                  <button
-                    className="active-filter-clear"
-                    onClick={() => removeFilter(type)}
-                    title={`Remove ${type} filter`}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              {activeFilterCount > 1 && (
-                <button className="active-filter-clear-all" onClick={clearFilters}>
-                  Clear all
-                </button>
-              )}
-            </>
-          )}
-
-          {tab === 'explore' && (
-            <div className="filter-anchor" ref={filterAnchorRef}>
-              <button
-                className={`btn-filter${showFilterPanel ? ' is-open' : ''}${activeFilterCount > 0 ? ' has-filters' : ''}`}
-                onClick={() => setShowFilterPanel((v) => !v)}
-                title="Filter recipes"
-              >
-                ⚙ Filters
-              </button>
-              {showFilterPanel && (
-                <FilterPanel
-                  activeFilters={activeFilters}
-                  onToggle={toggleFilter}
-                  onClose={() => setShowFilterPanel(false)}
-                />
-              )}
-            </div>
-          )}
         </div>
       </nav>
+
+      {tab === 'explore' && (
+        <div className="filter-bar">
+          <div className="filter-bar-chips">
+            {activeFilterCount > 0 && (
+              <>
+                {(Object.entries(activeFilters) as [TagFilterType, string][]).map(([type, value]) => (
+                  <span key={type} className="active-filter-chip">
+                    {FILTER_EMOJI[type]} {value}
+                    <button
+                      className="active-filter-clear"
+                      onClick={() => removeFilter(type)}
+                      title={`Remove ${type} filter`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {activeFilterCount > 1 && (
+                  <button className="active-filter-clear-all" onClick={clearFilters}>
+                    Clear all
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+          <div className="filter-anchor">
+            <button
+              className={`btn-filter${showFilterPanel ? ' is-open' : ''}${activeFilterCount > 0 ? ' has-filters' : ''}`}
+              onClick={() => setShowFilterPanel((v) => !v)}
+              title="Filter recipes"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style={{verticalAlign: 'middle', marginRight: 4}}>
+                <path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2z"/>
+              </svg>
+              {activeFilterCount > 0 ? `Filters · ${activeFilterCount}` : 'Filters'}
+            </button>
+            {showFilterPanel && (
+              <FilterPanel
+                activeFilters={activeFilters}
+                onToggle={toggleFilter}
+                onClose={() => setShowFilterPanel(false)}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {tab === 'collections' && !selectedCollection && (
         <div className="collections-page">

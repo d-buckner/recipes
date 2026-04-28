@@ -45,6 +45,8 @@ export function FilterPanel({ activeFilters, onToggle, onClose }: FilterPanelPro
   }
 
   return (
+    <>
+    <div className="filter-backdrop" onClick={onClose} />
     <div className="filter-panel" ref={panelRef}>
       <div className="filter-panel-header">
         <span className="filter-panel-title">Filters</span>
@@ -100,5 +102,6 @@ export function FilterPanel({ activeFilters, onToggle, onClose }: FilterPanelPro
         </div>
       )}
     </div>
+    </>
   )
 }
