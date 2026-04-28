@@ -1,5 +1,6 @@
 import io
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -13,6 +14,11 @@ from .config import settings
 from .models import RecipeRow
 
 log = logging.getLogger(__name__)
+
+# Sites with an active worker. Guarded by _active_lock.
+# Prevents multiple workers from running against the same site in a single process.
+_active_sites: set[str] = set()
+_active_lock = threading.Lock()
 
 CLAIM_TIMEOUT = 60  # seconds before a stale processing item is reclaimed (2x fetch timeout)
 MAX_RETRIES = 3
@@ -150,8 +156,9 @@ def run_worker(delay: float | None = None, site: str | None = None) -> dict[str,
 def run_workers(delay: float | None = None) -> dict[str, int]:
     """
     Spawn one worker thread per site that has pending work.
-    Each worker is isolated to its own site, so rate limiting is per-site.
-    Returns combined counts.
+    Sites that already have an active worker (from a previous call still running)
+    are skipped, so at most one worker per site is ever active in this process.
+    Returns combined counts for the workers started by this call.
     """
     actual_delay = delay if delay is not None else settings.rate_limit_delay
 
@@ -160,18 +167,34 @@ def run_workers(delay: float | None = None) -> dict[str, int]:
         log.info("Reset %d stale processing item(s) back to discovered", reset)
 
     pending_sites = db.list_pending_sites()
-    if not pending_sites:
-        log.info("No pending work.")
+
+    with _active_lock:
+        sites_to_start = [s for s in pending_sites if s not in _active_sites]
+        _active_sites.update(sites_to_start)
+
+    if not sites_to_start:
+        log.info("No new sites to start (all pending sites already have active workers).")
         return {"processed": 0, "succeeded": 0, "failed": 0}
 
-    log.info("Starting 1 worker per site: %s", pending_sites)
+    log.info("Starting workers for: %s", sites_to_start)
 
-    if len(pending_sites) == 1:
-        return run_worker(actual_delay, pending_sites[0])
+    def _run_and_release(site: str) -> dict[str, int]:
+        try:
+            return run_worker(actual_delay, site)
+        finally:
+            with _active_lock:
+                _active_sites.discard(site)
 
     totals = {"processed": 0, "succeeded": 0, "failed": 0}
-    with ThreadPoolExecutor(max_workers=len(pending_sites)) as executor:
-        futures = [executor.submit(run_worker, actual_delay, site) for site in pending_sites]
+
+    if len(sites_to_start) == 1:
+        result = _run_and_release(sites_to_start[0])
+        for key in totals:
+            totals[key] += result[key]
+        return totals
+
+    with ThreadPoolExecutor(max_workers=len(sites_to_start)) as executor:
+        futures = [executor.submit(_run_and_release, site) for site in sites_to_start]
         for future in as_completed(futures):
             result = future.result()
             for key in totals:
