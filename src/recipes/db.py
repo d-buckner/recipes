@@ -215,10 +215,16 @@ def claim_next_url(claim_timeout: int = 300) -> RecipeRow | None:
 
 
 def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = None, image: bytes | None = None) -> None:
-    title = recipe_json.get("title", "")
-    description = recipe_json.get("description", "") or ""
-    ingredients = " ".join(recipe_json.get("ingredients", []) or [])
-    keywords = " ".join(recipe_json.get("keywords", []) or []) if isinstance(recipe_json.get("keywords"), list) else (recipe_json.get("keywords") or "")
+    # Remove the external image URL when we have a locally stored copy so the
+    # API response doesn't reference external resources.
+    stored_json = dict(recipe_json)
+    if image is not None:
+        stored_json.pop("image", None)
+
+    title = stored_json.get("title", "")
+    description = stored_json.get("description", "") or ""
+    ingredients = " ".join(stored_json.get("ingredients", []) or [])
+    keywords = " ".join(stored_json.get("keywords", []) or []) if isinstance(stored_json.get("keywords"), list) else (stored_json.get("keywords") or "")
 
     with get_conn() as conn:
         conn.execute(
@@ -227,7 +233,7 @@ def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = Non
             SET status = 'complete', recipe_json = ?, thumbnail = ?, image = ?, updated_at = datetime('now')
             WHERE id = ?
             """,
-            (json.dumps(recipe_json), thumbnail, image, recipe_id),
+            (json.dumps(stored_json), thumbnail, image, recipe_id),
         )
         conn.execute(
             "INSERT OR REPLACE INTO recipe_fts (id, title, description, ingredients, keywords) VALUES (?, ?, ?, ?, ?)",
