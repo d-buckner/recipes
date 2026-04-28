@@ -120,18 +120,19 @@ def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
         return False
 
 
-def run_worker(delay: float | None = None) -> dict[str, int]:
+def run_worker(delay: float | None = None, site: str | None = None) -> dict[str, int]:
     """
-    Single-threaded worker loop. Processes URLs until the queue is empty.
+    Single-threaded worker loop for a specific site.
+    Processes URLs until the queue for that site is empty.
     Returns counts: {processed, succeeded, failed}.
     """
     actual_delay = delay if delay is not None else settings.rate_limit_delay
     counts = {"processed": 0, "succeeded": 0, "failed": 0}
 
     while True:
-        recipe = db.claim_next_url(claim_timeout=CLAIM_TIMEOUT)
+        recipe = db.claim_next_url(claim_timeout=CLAIM_TIMEOUT, site=site)
         if recipe is None:
-            log.info("Queue empty, worker done.")
+            log.info("Queue empty for site=%s, worker done.", site or "any")
             break
         if counts["processed"] > 0:
             log.debug("Rate limit: sleeping %.1fs", actual_delay)
@@ -146,26 +147,31 @@ def run_worker(delay: float | None = None) -> dict[str, int]:
     return counts
 
 
-def run_workers(max_workers: int | None = None, delay: float | None = None) -> dict[str, int]:
+def run_workers(delay: float | None = None) -> dict[str, int]:
     """
-    Multi-threaded worker pool. Each thread runs its own loop.
+    Spawn one worker thread per site that has pending work.
+    Each worker is isolated to its own site, so rate limiting is per-site.
     Returns combined counts.
     """
-    workers = max_workers if max_workers is not None else settings.max_workers
     actual_delay = delay if delay is not None else settings.rate_limit_delay
 
     reset = db.reset_stale_processing()
     if reset:
         log.info("Reset %d stale processing item(s) back to discovered", reset)
 
-    log.info("Starting %d worker(s) with %.1fs delay", workers, actual_delay)
+    pending_sites = db.list_pending_sites()
+    if not pending_sites:
+        log.info("No pending work.")
+        return {"processed": 0, "succeeded": 0, "failed": 0}
 
-    if workers <= 1:
-        return run_worker(actual_delay)
+    log.info("Starting 1 worker per site: %s", pending_sites)
+
+    if len(pending_sites) == 1:
+        return run_worker(actual_delay, pending_sites[0])
 
     totals = {"processed": 0, "succeeded": 0, "failed": 0}
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(run_worker, actual_delay) for _ in range(workers)]
+    with ThreadPoolExecutor(max_workers=len(pending_sites)) as executor:
+        futures = [executor.submit(run_worker, actual_delay, site) for site in pending_sites]
         for future in as_completed(futures):
             result = future.result()
             for key in totals:

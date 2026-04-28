@@ -199,33 +199,48 @@ def insert_discovered_urls(urls: list[tuple[str, str]]) -> int:
         return cursor.rowcount
 
 
-def claim_next_url(claim_timeout: int = 300) -> RecipeRow | None:
+def list_pending_sites() -> list[str]:
+    """Return distinct sites that have at least one discovered recipe."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT site FROM recipes WHERE status = 'discovered' ORDER BY site"
+        ).fetchall()
+        return [row["site"] for row in rows]
+
+
+def claim_next_url(claim_timeout: int = 300, site: str | None = None) -> RecipeRow | None:
     """
     Atomically claim the next URL for processing.
     Picks from:
       - status = 'discovered' (normal queue), OR
       - status = 'processing' AND claimed_at is stale (crash recovery)
+    Optionally filtered to a specific site.
     """
+    site_filter = "AND site = ?" if site else ""
+    site_params = [site] if site else []
     with get_conn() as conn:
         row = conn.execute(
-            """
+            f"""
             UPDATE recipes
             SET status = 'processing',
                 claimed_at = datetime('now'),
                 updated_at = datetime('now')
             WHERE id = (
                 SELECT id FROM recipes
-                WHERE status = 'discovered'
-                   OR (
-                       status = 'processing'
-                       AND claimed_at < datetime('now', ? || ' seconds')
-                   )
+                WHERE (
+                    status = 'discovered'
+                    OR (
+                        status = 'processing'
+                        AND claimed_at < datetime('now', ? || ' seconds')
+                    )
+                )
+                {site_filter}
                 ORDER BY created_at ASC LIMIT 1
             )
             RETURNING id, url, site, status, recipe_json, error_msg,
                       retry_count, claimed_at, created_at, updated_at
             """,
-            (f"-{claim_timeout}",),
+            (f"-{claim_timeout}", *site_params),
         ).fetchone()
         if row is None:
             return None

@@ -31,10 +31,9 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 
 
 @cli.command()
-@click.option("--workers", default=None, type=int, help="Number of worker threads (overrides env).")
 @click.option("--delay", default=None, type=float, help="Rate limit delay in seconds (overrides env).")
 @click.option("--sitemap", default=None, help="Use a specific sitemap XML URL instead of homepage discovery.")
-def scrape(workers: int | None, delay: float | None, sitemap: str | None) -> None:
+def scrape(delay: float | None, sitemap: str | None) -> None:
     """Discover recipes from configured sites and scrape them."""
     if sitemap:
         click.echo(f"Discovering from sitemap: {sitemap}")
@@ -56,7 +55,7 @@ def scrape(workers: int | None, delay: float | None, sitemap: str | None) -> Non
     click.echo(f"\nTotal new URLs: {total_discovered}")
     click.echo("Starting scraper workers...")
 
-    counts = scraper.run_workers(max_workers=workers, delay=delay)
+    counts = scraper.run_workers(delay=delay)
     click.echo(
         f"\nDone. Processed: {counts['processed']}, "
         f"Succeeded: {counts['succeeded']}, "
