@@ -4,8 +4,10 @@ const BASE = '/api'
 
 function applyFilters(params: URLSearchParams, filters?: ActiveFilters): void {
   if (!filters) return
-  for (const [key, value] of Object.entries(filters)) {
-    if (value) params.set(key, value)
+  for (const [key, values] of Object.entries(filters)) {
+    if (values) {
+      for (const value of values) params.append(key, value)
+    }
   }
 }
 

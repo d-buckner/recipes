@@ -75,10 +75,10 @@ def search_recipes(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    author: str | None = Query(default=None),
-    cuisine: str | None = Query(default=None),
-    category: str | None = Query(default=None),
-    site: str | None = Query(default=None),
+    author: list[str] = Query(default=[]),
+    cuisine: list[str] = Query(default=[]),
+    category: list[str] = Query(default=[]),
+    site: list[str] = Query(default=[]),
 ) -> list[SearchResult]:
     safe_query = sanitize_fts_query(q)
     return db.search_recipes(safe_query, limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site)
@@ -88,10 +88,10 @@ def search_recipes(
 def list_recipes(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    author: str | None = Query(default=None),
-    cuisine: str | None = Query(default=None),
-    category: str | None = Query(default=None),
-    site: str | None = Query(default=None),
+    author: list[str] = Query(default=[]),
+    cuisine: list[str] = Query(default=[]),
+    category: list[str] = Query(default=[]),
+    site: list[str] = Query(default=[]),
 ) -> list[SearchResult]:
     return db.list_recipes(limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site)
 
@@ -179,14 +179,26 @@ def list_supported_sites() -> list[str]:
     return sorted(SCRAPERS.keys())
 
 
+_DISCOVERY_TIMEOUT = 90.0  # seconds
+
+
 @app.post("/sites/discover", response_model=DiscoverResponse)
 async def discover_site_endpoint(req: DiscoverRequest) -> DiscoverResponse:
-    if req.sitemap_url:
-        count = await asyncio.to_thread(discovery.discover_from_sitemap_url, req.sitemap_url)
-        site = urlparse(req.sitemap_url).netloc or urlparse(req.site_url).netloc
-    else:
-        count = await asyncio.to_thread(discovery.discover_site, req.site_url)
-        site = urlparse(req.site_url).netloc
+    try:
+        if req.sitemap_url:
+            count = await asyncio.wait_for(
+                asyncio.to_thread(discovery.discover_from_sitemap_url, req.sitemap_url),
+                timeout=_DISCOVERY_TIMEOUT,
+            )
+            site = urlparse(req.sitemap_url).netloc or urlparse(req.site_url).netloc
+        else:
+            count = await asyncio.wait_for(
+                asyncio.to_thread(discovery.discover_site, req.site_url),
+                timeout=_DISCOVERY_TIMEOUT,
+            )
+            site = urlparse(req.site_url).netloc
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Discovery timed out — the site may be unreachable or its sitemap is too large.")
     return DiscoverResponse(discovered=count, site=site)
 
 

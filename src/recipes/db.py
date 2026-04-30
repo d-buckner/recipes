@@ -350,29 +350,33 @@ def fail_recipe(recipe_id: int, error_msg: str, max_retries: int = 3) -> None:
         )
 
 
+def _in_placeholders(values: list[str]) -> str:
+    return "(" + ",".join("?" * len(values)) + ")"
+
+
 def search_recipes(
     query: str,
     limit: int = 20,
     offset: int = 0,
-    author: str | None = None,
-    cuisine: str | None = None,
-    category: str | None = None,
-    site: str | None = None,
+    author: list[str] | None = None,
+    cuisine: list[str] | None = None,
+    category: list[str] | None = None,
+    site: list[str] | None = None,
 ) -> list[SearchResult]:
     extra_conditions: list[str] = []
     extra_params: list[str] = []
     if author:
-        extra_conditions.append("json_extract(r.recipe_json, '$.author') = ?")
-        extra_params.append(author)
+        extra_conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
+        extra_params.extend(author)
     if cuisine:
-        extra_conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value = ?)")
-        extra_params.append(cuisine)
+        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value IN {_in_placeholders(cuisine)})")
+        extra_params.extend(cuisine)
     if category:
-        extra_conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value = ?)")
-        extra_params.append(category)
+        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value IN {_in_placeholders(category)})")
+        extra_params.extend(category)
     if site:
-        extra_conditions.append("r.site = ?")
-        extra_params.append(site)
+        extra_conditions.append(f"r.site IN {_in_placeholders(site)}")
+        extra_params.extend(site)
     extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
     with get_conn() as conn:
         rows = conn.execute(
@@ -502,25 +506,25 @@ def get_stats() -> ScrapeRunStats:
 def list_recipes(
     limit: int = 20,
     offset: int = 0,
-    author: str | None = None,
-    cuisine: str | None = None,
-    category: str | None = None,
-    site: str | None = None,
+    author: list[str] | None = None,
+    cuisine: list[str] | None = None,
+    category: list[str] | None = None,
+    site: list[str] | None = None,
 ) -> list[SearchResult]:
     conditions = ["r.status = 'complete'"]
     params: list[str | int] = []
     if author:
-        conditions.append("json_extract(r.recipe_json, '$.author') = ?")
-        params.append(author)
+        conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
+        params.extend(author)
     if cuisine:
-        conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value = ?)")
-        params.append(cuisine)
+        conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value IN {_in_placeholders(cuisine)})")
+        params.extend(cuisine)
     if category:
-        conditions.append("EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value = ?)")
-        params.append(category)
+        conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value IN {_in_placeholders(category)})")
+        params.extend(category)
     if site:
-        conditions.append("r.site = ?")
-        params.append(site)
+        conditions.append(f"r.site IN {_in_placeholders(site)}")
+        params.extend(site)
     where = " AND ".join(conditions)
     with get_conn() as conn:
         rows = conn.execute(

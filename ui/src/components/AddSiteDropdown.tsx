@@ -24,12 +24,6 @@ export function AddSiteDropdown({ onClose, onAdd }: AddSiteDropdownProps) {
   }, [])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (comboRef.current && !comboRef.current.contains(e.target as Node)) {
         setOpen(false)
@@ -92,7 +86,7 @@ export function AddSiteDropdown({ onClose, onAdd }: AddSiteDropdownProps) {
   const canAdd = inputValue.trim().length > 0
 
   return (
-    <div className="add-site-dropdown">
+    <div className="add-site-form">
       <div className="form-field" ref={comboRef}>
         <label htmlFor="site-search">Add a recipe site</label>
         <div className="site-combobox">

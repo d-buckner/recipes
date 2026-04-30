@@ -12,7 +12,7 @@ export interface TagFilter {
   value: string
 }
 
-export type ActiveFilters = Partial<Record<TagFilterType, string>>
+export type ActiveFilters = Partial<Record<TagFilterType, string[]>>
 
 export interface FilterOption {
   value: string

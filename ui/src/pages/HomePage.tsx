@@ -18,6 +18,7 @@ import {
 
 import { AddSiteDropdown } from '../components/AddSiteDropdown'
 import { FilterPanel } from '../components/FilterPanel'
+import { Modal } from '../components/Modal'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
 import { SettingsModal } from '../components/SettingsModal'
@@ -54,7 +55,7 @@ export function HomePage() {
   const [stats, setStats] = useState<ScrapeRunStats | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
 
-  const { activeFilters, activeFilterCount, toggleFilter, removeFilter, clearFilters } = useUrlFilters()
+  const { activeFilters, activeFilterCount, toggleFilter, clearFilters } = useUrlFilters()
 
   // Collections state
   const [collections, setCollections] = useState<Collection[]>([])
@@ -63,7 +64,6 @@ export function HomePage() {
   const [creatingCollection, setCreatingCollection] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const addSiteAnchorRef = useRef<HTMLDivElement>(null)
 
   const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
@@ -93,17 +93,6 @@ export function HomePage() {
     const interval = setInterval(refreshStats, 15_000)
     return () => clearInterval(interval)
   }, [refreshStats])
-
-  // Close the add-site dropdown on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (addSiteAnchorRef.current && !addSiteAnchorRef.current.contains(e.target as Node)) {
-        setShowAddSite(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
 
   // Load favorites when on that tab
   useEffect(() => {
@@ -270,23 +259,27 @@ export function HomePage() {
       <header className="header">
         <span className="logo">🍴 Recipes</span>
         <SearchBar value={query} onChange={setQuery} disabled={tab !== 'explore'} placeholder={tab !== 'explore' ? 'Search available on Explore' : undefined} />
-        <div className="add-site-anchor" ref={addSiteAnchorRef}>
-          <button className="btn-add" onClick={() => setShowAddSite((v) => !v)}>+ Add Site</button>
-          {showAddSite && (
-            <AddSiteDropdown
-              onClose={() => setShowAddSite(false)}
-              onAdd={handleAddSite}
-            />
-          )}
-        </div>
+        <button className="btn-add" onClick={() => setShowAddSite((v) => !v)}>+ Add Site</button>
         <button className="btn-settings" onClick={() => setShowSettings(true)} title="Settings">⚙</button>
       </header>
+
+      {showAddSite && (
+        <Modal title="Add Site" onClose={() => setShowAddSite(false)} maxWidth={420}>
+          <AddSiteDropdown onClose={() => setShowAddSite(false)} onAdd={handleAddSite} />
+        </Modal>
+      )}
 
       {showSettings && (
         <SettingsModal
           stats={stats}
           onClose={() => setShowSettings(false)}
         />
+      )}
+
+      {tab === 'explore' && showFilterPanel && (
+        <Modal title="Filters" onClose={() => setShowFilterPanel(false)} maxWidth={460}>
+          <FilterPanel activeFilters={activeFilters} onToggle={toggleFilter} />
+        </Modal>
       )}
 
       <nav className="tabs">
@@ -318,19 +311,21 @@ export function HomePage() {
           <div className="filter-bar-chips">
             {activeFilterCount > 0 && (
               <>
-                {(Object.entries(activeFilters) as [TagFilterType, string][]).map(([type, value]) => (
-                  <span key={type} className="active-filter-chip">
-                    {FILTER_EMOJI[type]} {value}
-                    <button
-                      className="active-filter-clear"
-                      onClick={() => removeFilter(type)}
-                      title={`Remove ${type} filter`}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                {activeFilterCount > 1 && (
+                {(Object.entries(activeFilters) as [TagFilterType, string[]][]).flatMap(([type, values]) =>
+                  values.map((value) => (
+                    <span key={`${type}:${value}`} className="active-filter-chip">
+                      {FILTER_EMOJI[type]} {value}
+                      <button
+                        className="active-filter-clear"
+                        onClick={() => toggleFilter(type, value)}
+                        title={`Remove ${value}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                )}
+                {Object.values(activeFilters).reduce((n, vals) => n + (vals?.length ?? 0), 0) > 1 && (
                   <button className="active-filter-clear-all" onClick={clearFilters}>
                     Clear all
                   </button>
@@ -338,25 +333,16 @@ export function HomePage() {
               </>
             )}
           </div>
-          <div className="filter-anchor">
-            <button
-              className={`btn-filter${showFilterPanel ? ' is-open' : ''}${activeFilterCount > 0 ? ' has-filters' : ''}`}
-              onClick={() => setShowFilterPanel((v) => !v)}
-              title="Filter recipes"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style={{verticalAlign: 'middle', marginRight: 4}}>
-                <path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2z"/>
-              </svg>
-              {activeFilterCount > 0 ? `Filters · ${activeFilterCount}` : 'Filters'}
-            </button>
-            {showFilterPanel && (
-              <FilterPanel
-                activeFilters={activeFilters}
-                onToggle={toggleFilter}
-                onClose={() => setShowFilterPanel(false)}
-              />
-            )}
-          </div>
+          <button
+            className={`btn-filter${showFilterPanel ? ' is-open' : ''}${activeFilterCount > 0 ? ' has-filters' : ''}`}
+            onClick={() => setShowFilterPanel((v) => !v)}
+            title="Filter recipes"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style={{verticalAlign: 'middle', marginRight: 4}}>
+              <path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2z"/>
+            </svg>
+            {activeFilterCount > 0 ? `Filters · ${activeFilterCount}` : 'Filters'}
+          </button>
         </div>
       )}
 

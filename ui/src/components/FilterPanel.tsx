@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getFilterOptions } from '../api'
 import type { ActiveFilters, FilterOption, FilterOptions, TagFilterType } from '../types'
 
@@ -9,17 +9,21 @@ const SECTIONS: { type: TagFilterType; label: string; emoji: string }[] = [
   { type: 'site', label: 'Site', emoji: '🌐' },
 ]
 
+const TOP_N = 8
+
 interface FilterPanelProps {
   activeFilters: ActiveFilters
   onToggle: (type: TagFilterType, value: string) => void
-  onClose: () => void
 }
 
-export function FilterPanel({ activeFilters, onToggle, onClose }: FilterPanelProps) {
+export function FilterPanel({ activeFilters, onToggle }: FilterPanelProps) {
   const [options, setOptions] = useState<FilterOptions | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState<Partial<Record<TagFilterType, string>>>({})
-  const panelRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState<Set<TagFilterType>>(
+    () => new Set(SECTIONS.map(s => s.type).filter(t => (activeFilters[t]?.length ?? 0) > 0))
+  )
+  const [showAll, setShowAll] = useState<Set<TagFilterType>>(new Set())
 
   useEffect(() => {
     getFilterOptions()
@@ -28,64 +32,92 @@ export function FilterPanel({ activeFilters, onToggle, onClose }: FilterPanelPro
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [onClose])
-
-  const filteredOptions = (type: TagFilterType, opts: FilterOption[]): FilterOption[] => {
-    const q = search[type]?.toLowerCase() ?? ''
-    if (!q) return opts
-    return opts.filter((o) => o.value.toLowerCase().includes(q))
+  const toggleSection = (type: TagFilterType) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(type)) next.delete(type)
+      else next.add(type)
+      return next
+    })
   }
 
+  const toggleShowAll = (type: TagFilterType) => {
+    setShowAll((prev) => {
+      const next = new Set(prev)
+      if (next.has(type)) next.delete(type)
+      else next.add(type)
+      return next
+    })
+  }
+
+  const getVisible = (type: TagFilterType, opts: FilterOption[]): FilterOption[] => {
+    const q = search[type]?.toLowerCase() ?? ''
+    const filtered = q ? opts.filter((o) => o.value.toLowerCase().includes(q)) : opts
+    if (q || showAll.has(type)) return filtered
+    return filtered.slice(0, TOP_N)
+  }
+
+  if (loading) return <div className="filter-panel-loading">Loading…</div>
+  if (!options) return <div className="filter-panel-loading">Failed to load filters.</div>
+
   return (
-    <>
-    <div className="filter-backdrop" onClick={onClose} />
-    <div className="filter-panel" ref={panelRef}>
-      <div className="filter-panel-header">
-        <span className="filter-panel-title">Filters</span>
-        <button className="modal-close" onClick={onClose} title="Close">×</button>
-      </div>
+    <div className="filter-panel-sections">
+      {SECTIONS.map(({ type, label, emoji }) => {
+        const isExpanded = expanded.has(type)
+        const isShowingAll = showAll.has(type)
+        const activeVals = activeFilters[type] ?? []
+        const allOpts = options[type] ?? []
+        const q = search[type]?.toLowerCase() ?? ''
+        const filtered = q ? allOpts.filter((o) => o.value.toLowerCase().includes(q)) : allOpts
+        const visible = getVisible(type, allOpts)
+        const hiddenCount = filtered.length - TOP_N
 
-      {loading && (
-        <div className="filter-panel-loading">Loading…</div>
-      )}
+        return (
+          <div key={type} className={`filter-section${isExpanded ? ' is-expanded' : ''}`}>
+            <button className="filter-section-header" onClick={() => toggleSection(type)}>
+              <span className="filter-section-label">{emoji} {label}</span>
+              {activeVals.length > 0 && !isExpanded && (
+                <span className="filter-section-count">{activeVals.length} selected</span>
+              )}
+              <span className="filter-section-chevron">{isExpanded ? '▾' : '▸'}</span>
+            </button>
 
-      {!loading && !options && (
-        <div className="filter-panel-loading">Failed to load filters.</div>
-      )}
+            {!isExpanded && activeVals.length > 0 && (
+              <div className="filter-section-active">
+                {activeVals.map((val) => (
+                  <button
+                    key={val}
+                    className="filter-section-chip"
+                    onClick={(e) => { e.stopPropagation(); onToggle(type, val) }}
+                  >
+                    {val} ×
+                  </button>
+                ))}
+              </div>
+            )}
 
-      {!loading && options && (
-        <div className="filter-panel-sections">
-          {SECTIONS.map(({ type, label, emoji }) => {
-            const opts = filteredOptions(type, options[type] ?? [])
-            const active = activeFilters[type]
-            return (
-              <div key={type} className="filter-section">
-                <div className="filter-section-label">{emoji} {label}</div>
-                {(options[type]?.length ?? 0) > 8 && (
+            {isExpanded && (
+              <div className="filter-section-body">
+                {allOpts.length > TOP_N && (
                   <input
                     className="filter-section-search"
                     type="text"
                     placeholder={`Search ${label.toLowerCase()}…`}
                     value={search[type] ?? ''}
-                    onChange={(e) => setSearch((s) => ({ ...s, [type]: e.target.value }))}
+                    onChange={(e) => {
+                      setSearch((s) => ({ ...s, [type]: e.target.value }))
+                      setShowAll((prev) => { const next = new Set(prev); next.delete(type); return next })
+                    }}
                   />
                 )}
-                {opts.length === 0 ? (
+                {visible.length === 0 ? (
                   <span className="filter-section-empty">No options</span>
                 ) : (
                   <ul className="filter-option-list">
-                    {opts.map((opt) => (
+                    {visible.map((opt) => (
                       <li key={opt.value}>
                         <button
-                          className={`filter-option-btn${active === opt.value ? ' is-active' : ''}`}
+                          className={`filter-option-btn${activeVals.includes(opt.value) ? ' is-active' : ''}`}
                           onClick={() => onToggle(type, opt.value)}
                           title={opt.value}
                         >
@@ -96,12 +128,21 @@ export function FilterPanel({ activeFilters, onToggle, onClose }: FilterPanelPro
                     ))}
                   </ul>
                 )}
+                {!q && hiddenCount > 0 && !isShowingAll && (
+                  <button className="filter-show-more" onClick={() => toggleShowAll(type)}>
+                    + {hiddenCount} more
+                  </button>
+                )}
+                {!q && isShowingAll && (
+                  <button className="filter-show-more" onClick={() => toggleShowAll(type)}>
+                    Show less
+                  </button>
+                )}
               </div>
-            )
-          })}
-        </div>
-      )}
+            )}
+          </div>
+        )
+      })}
     </div>
-    </>
   )
 }

@@ -94,7 +94,7 @@ export function RecipeCard({ recipe, onFavorite, onRemoveFromCollection, onTagFi
               ...recipe.categories.map((v) => ({ type: 'category' as TagFilterType, value: v, label: `📂 ${v}` })),
               ...recipe.cuisines.map((v) => ({ type: 'cuisine' as TagFilterType, value: v, label: `🗺 ${v}` })),
               ...(recipe.author && recipe.author.trim().toLowerCase() !== (recipe.site_name ?? '').trim().toLowerCase() ? [{ type: 'author' as TagFilterType, value: recipe.author, label: `👤 ${recipe.author}` }] : []),
-            ].filter((tag) => activeFilters?.[tag.type] !== tag.value)
+            ].filter((tag) => !activeFilters?.[tag.type]?.includes(tag.value))
             const visibleTags = contentTags.slice(0, 2)
             if (hideSite && visibleTags.length === 0) return null
             return (

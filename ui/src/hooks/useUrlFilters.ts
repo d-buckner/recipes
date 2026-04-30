@@ -18,21 +18,29 @@ export function useUrlFilters(): UseUrlFiltersResult {
   const activeFilters = useMemo((): ActiveFilters => {
     const filters: ActiveFilters = {}
     for (const type of FILTER_TYPES) {
-      const value = searchParams.get(type)
-      if (value) filters[type] = value
+      const values = searchParams.getAll(type)
+      if (values.length > 0) filters[type] = values
     }
     return filters
   }, [searchParams])
 
+  // Count active filter types (not individual values) for the button label
   const activeFilterCount = Object.keys(activeFilters).length
 
   const toggleFilter = (type: TagFilterType, value: string) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      if (next.get(type) === value) {
-        next.delete(type)
+      const current = next.getAll(type)
+      next.delete(type)
+      if (current.includes(value)) {
+        // Remove this value, keep the rest
+        for (const v of current) {
+          if (v !== value) next.append(type, v)
+        }
       } else {
-        next.set(type, value)
+        // Add this value alongside existing ones
+        for (const v of current) next.append(type, v)
+        next.append(type, value)
       }
       return next
     })
