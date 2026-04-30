@@ -3,7 +3,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from recipe_scrapers._exceptions import NoSchemaFoundInWildMode, RecipeSchemaNotFound
 
-from recipes.discovery import _collect_leaf_sitemaps, _is_valid_recipe, _probe_has_recipes, discover_site
+from recipes.discovery import (
+    _collect_leaf_sitemaps,
+    _is_valid_recipe,
+    _log_sample_size,
+    _probe_sitemap,
+    discover_site,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +63,6 @@ class TestCollectLeafSitemaps:
 
 
 # ---------------------------------------------------------------------------
-# _probe_has_recipes
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # _is_valid_recipe
 # ---------------------------------------------------------------------------
 
@@ -81,73 +83,94 @@ class TestIsValidRecipe:
         assert _is_valid_recipe({}) is False
 
 
-class TestProbeHasRecipes:
-    def test_returns_true_on_first_success(self):
-        sitemap = _leaf("https://example.com/sitemap.xml", ["https://example.com/recipes/pasta"])
-        full_recipe = {"title": "Pasta", "ingredients": ["pasta", "salt"], "instructions": "Boil."}
+# ---------------------------------------------------------------------------
+# _log_sample_size
+# ---------------------------------------------------------------------------
+
+class TestLogSampleSize:
+    def test_small_returns_all(self):
+        assert _log_sample_size(3) == 3
+
+    def test_min_n_boundary(self):
+        assert _log_sample_size(5) == 5
+
+    def test_grows_with_size(self):
+        s100 = _log_sample_size(100)
+        s1000 = _log_sample_size(1000)
+        assert s100 < s1000
+
+    def test_capped_at_max(self):
+        assert _log_sample_size(1_000_000) == 20
+
+
+# ---------------------------------------------------------------------------
+# _probe_sitemap
+# ---------------------------------------------------------------------------
+
+class TestProbeSitemap:
+    def test_empty_sitemap_returns_zeros(self):
+        sitemap = _leaf("https://example.com/sitemap.xml", [])
+        assert _probe_sitemap(sitemap) == (0, 0)
+
+    def test_all_hits(self):
+        sitemap = _leaf("https://example.com/sitemap.xml", [
+            "https://example.com/recipes/pasta",
+            "https://example.com/recipes/soup",
+        ])
+        full_recipe = {"title": "Pasta", "ingredients": ["pasta"], "instructions": "Boil."}
         with patch("recipes.discovery.fetch_html", return_value="<html>"), \
              patch("recipes.discovery.parse_recipe", return_value=full_recipe):
-            assert _probe_has_recipes(sitemap) is True
+            n_sampled, n_hits = _probe_sitemap(sitemap)
+        assert n_sampled == 2
+        assert n_hits == 2
 
-    def test_returns_true_when_later_url_succeeds(self):
-        sitemap = _leaf("https://example.com/sitemap.xml", [
-            "https://example.com/recipes/collections/vegan",
-            "https://example.com/recipes/pasta",
-        ])
-        full_recipe = {"title": "Pasta", "ingredients": ["pasta", "salt"], "instructions": "Boil."}
-        with patch("recipes.discovery.fetch_html", return_value="<html>"), \
-             patch("recipes.discovery.parse_recipe", side_effect=[
-                 NoSchemaFoundInWildMode("no schema"),
-                 full_recipe,
-             ]):
-            assert _probe_has_recipes(sitemap) is True
-
-    def test_returns_false_when_all_raise_no_schema(self):
+    def test_no_hits_no_schema(self):
         sitemap = _leaf("https://example.com/sitemap.xml", [
             "https://example.com/tag/vegan",
             "https://example.com/tag/quick",
         ])
         with patch("recipes.discovery.fetch_html", return_value="<html>"), \
              patch("recipes.discovery.parse_recipe", side_effect=RecipeSchemaNotFound("no schema")):
-            assert _probe_has_recipes(sitemap) is False
+            n_sampled, n_hits = _probe_sitemap(sitemap)
+        assert n_sampled == 2
+        assert n_hits == 0
 
-    def test_returns_false_when_parse_returns_empty_fields(self):
-        """Collection/tag pages may parse without error but return no real recipe data."""
+    def test_no_hits_empty_fields(self):
         sitemap = _leaf("https://example.com/sitemap.xml", [
             "https://example.com/recipes/collections/vegan/",
         ])
-        empty = {"title": None, "ingredients": [], "instructions": "", "host": "example.com"}
+        empty = {"title": None, "ingredients": [], "instructions": ""}
         with patch("recipes.discovery.fetch_html", return_value="<html>"), \
              patch("recipes.discovery.parse_recipe", return_value=empty):
-            assert _probe_has_recipes(sitemap) is False
+            n_sampled, n_hits = _probe_sitemap(sitemap)
+        assert n_sampled == 1
+        assert n_hits == 0
 
-    def test_returns_false_for_empty_sitemap(self):
-        sitemap = _leaf("https://example.com/sitemap.xml", [])
-        assert _probe_has_recipes(sitemap) is False
-
-    def test_skips_network_errors_and_continues(self):
+    def test_network_errors_counted_as_sampled_not_hit(self):
+        import requests as req
         sitemap = _leaf("https://example.com/sitemap.xml", [
             "https://example.com/broken",
+            "https://example.com/also-broken",
+        ])
+        with patch("recipes.discovery.fetch_html", side_effect=req.ConnectionError("timeout")):
+            n_sampled, n_hits = _probe_sitemap(sitemap)
+        assert n_sampled == 2
+        assert n_hits == 0
+
+    def test_partial_hits(self):
+        sitemap = _leaf("https://example.com/sitemap.xml", [
+            "https://example.com/tag/vegan",
             "https://example.com/recipes/pasta",
         ])
-        import requests
-        full_recipe = {"title": "Pasta", "ingredients": ["pasta", "salt"], "instructions": "Boil."}
-        with patch("recipes.discovery.fetch_html", side_effect=[
-            requests.ConnectionError("timeout"),
-            "<html>",
-        ]), patch("recipes.discovery.parse_recipe", return_value=full_recipe):
-            assert _probe_has_recipes(sitemap) is True
-
-    def test_respects_sample_size(self):
-        sitemap = _leaf("https://example.com/sitemap.xml", [
-            "https://example.com/tag/a",
-            "https://example.com/tag/b",
-            "https://example.com/tag/c",
-            "https://example.com/recipes/pasta",  # would succeed but beyond sample
-        ])
+        full_recipe = {"title": "Pasta", "ingredients": ["pasta"], "instructions": "Boil."}
         with patch("recipes.discovery.fetch_html", return_value="<html>"), \
-             patch("recipes.discovery.parse_recipe", side_effect=NoSchemaFoundInWildMode("no schema")):
-            assert _probe_has_recipes(sitemap, sample_size=3) is False
+             patch("recipes.discovery.parse_recipe", side_effect=[
+                 NoSchemaFoundInWildMode("no schema"),
+                 full_recipe,
+             ]):
+            n_sampled, n_hits = _probe_sitemap(sitemap)
+        assert n_sampled == 2
+        assert n_hits == 1
 
 
 # ---------------------------------------------------------------------------
@@ -155,48 +178,30 @@ class TestProbeHasRecipes:
 # ---------------------------------------------------------------------------
 
 class TestDiscoverSite:
-    def test_uses_probe_confirmed_sitemaps(self, mem_db):
+    def test_uses_high_rate_sitemap_only(self, mem_db):
+        """A sitemap with 100% hit rate (≥ HIGH) causes only that sitemap to be selected."""
         posts = _leaf(
             "https://example.com/sitemap-posts.xml",
             ["https://example.com/recipes/pasta", "https://example.com/recipes/soup"],
         )
         pages = _leaf(
             "https://example.com/sitemap-pages.xml",
-            ["https://example.com/recipes/collections/vegan", "https://example.com/about"],
+            ["https://example.com/about", "https://example.com/contact"],
         )
         root = _index(None, [_index("https://example.com/sitemap.xml", [posts, pages])])
 
-        def fake_probe(sitemap, **_):
-            return sitemap is posts  # only posts sitemap has recipes
+        def fake_probe(sitemap):
+            return (10, 10) if sitemap is posts else (10, 0)
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", side_effect=fake_probe):
+             patch("recipes.discovery._probe_sitemap", side_effect=fake_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
             count = discover_site("https://example.com")
 
-        # Only posts sitemap selected; collection pages are skipped by URL filter too
-        assert count == 2
+        assert count == 2  # only posts sitemap selected
 
-    def test_collection_pages_excluded_even_if_url_matches(self, mem_db):
-        """Sitemap with /recipes/collections/... URLs should be excluded by probe."""
-        pages = _leaf(
-            "https://example.com/sitemap-pages.xml",
-            [
-                "https://example.com/recipes/collections/vegan/free/",
-                "https://example.com/recipes/collections/quick/",
-            ],
-        )
-        root = _index(None, [pages])
-
-        # Probe returns False (collection pages don't parse as recipes)
-        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=False):
-            count = discover_site("https://example.com")
-
-        # Fallback: all sitemaps used, but URL filter still matches (demonstrating
-        # that probe exclusion is the real fix — without probe these would sneak in)
-        assert count == 2  # fallback includes them; probe is what we rely on
-
-    def test_falls_back_to_all_when_probe_finds_nothing(self, mem_db):
+    def test_falls_back_to_all_when_no_hits(self, mem_db):
+        """When all probes return 0 hits, all sitemaps are used as fallback."""
         leaf = _leaf(
             "https://example.com/sitemap.xml",
             ["https://example.com/recipes/pasta"],
@@ -204,42 +209,29 @@ class TestDiscoverSite:
         root = _index(None, [leaf])
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=False):
+             patch("recipes.discovery._probe_sitemap", return_value=(10, 0)), \
+             patch("recipes.discovery._check_reachable", return_value=True):
             count = discover_site("https://example.com")
 
-        assert count == 1  # fallback: URL filter picks it up
+        assert count == 1  # fallback: all URLs used
 
-    def test_confirmed_sitemaps_bypass_url_filter(self, mem_db):
-        """Probe-confirmed sitemaps bypass the URL filter entirely.
-        Sites with flat slugs (no /recipe/ segment) must not have their URLs dropped."""
+    def test_all_urls_included_no_filter(self, mem_db):
+        """Probe-selected sitemaps include all their URLs with no URL filtering."""
         posts = _leaf(
             "https://example.com/sitemap-posts.xml",
             [
                 "https://example.com/recipes/pasta",
-                "https://example.com/newsletters/issue-1",
+                "https://example.com/newsletters/issue-1",  # no /recipe/ segment
             ],
         )
         root = _index(None, [posts])
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=True):
+             patch("recipes.discovery._probe_sitemap", return_value=(10, 10)), \
+             patch("recipes.discovery._check_reachable", return_value=True):
             count = discover_site("https://example.com")
 
-        assert count == 2  # probe confirmed the sitemap; URL filter is not applied
-
-    def test_custom_url_filter_applied_in_fallback_mode(self, mem_db):
-        """Custom URL filter is applied when probe finds no confirmed sitemaps (fallback)."""
-        leaf = _leaf(
-            "https://example.com/sitemap.xml",
-            ["https://example.com/food/chicken", "https://example.com/about"],
-        )
-        root = _index(None, [leaf])
-
-        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=False):
-            count = discover_site("https://example.com", url_filter=r"/food")
-
-        assert count == 1  # /food filter applied in fallback; /about excluded
+        assert count == 2  # both URLs included; no URL filtering applied
 
     def test_deduplicates_across_sitemaps(self, mem_db):
         url = "https://example.com/recipes/pasta"
@@ -248,10 +240,46 @@ class TestDiscoverSite:
         root = _index(None, [a, b])
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=True):
+             patch("recipes.discovery._probe_sitemap", return_value=(10, 10)), \
+             patch("recipes.discovery._check_reachable", return_value=True):
             count = discover_site("https://example.com")
 
-        assert count == 1
+        assert count == 1  # same URL in both sitemaps deduplicated
+
+    def test_unreachable_site_returns_zero(self, mem_db):
+        with patch("recipes.discovery._check_reachable", return_value=False):
+            count = discover_site("https://unreachable.example.com")
+        assert count == 0
+
+    def test_medium_rate_sitemaps_included_when_high_rate_present(self, mem_db):
+        """When best rate ≥ HIGH, sitemaps with rate ≥ MEDIUM are also included."""
+        posts = _leaf(
+            "https://example.com/sitemap-posts.xml",
+            ["https://example.com/recipes/pasta", "https://example.com/recipes/soup"],
+        )
+        mixed = _leaf(
+            "https://example.com/sitemap-mixed.xml",
+            ["https://example.com/recipes/cake"],  # 2/10 = 20% — above MEDIUM
+        )
+        noise = _leaf(
+            "https://example.com/sitemap-pages.xml",
+            ["https://example.com/about"],  # 0/10 = 0% — below MEDIUM
+        )
+        root = _index(None, [posts, mixed, noise])
+
+        def fake_probe(sitemap):
+            if sitemap is posts:
+                return (10, 10)   # 100% → HIGH
+            if sitemap is mixed:
+                return (10, 2)    # 20% → above MEDIUM
+            return (10, 0)        # 0% → below MEDIUM
+
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
+             patch("recipes.discovery._probe_sitemap", side_effect=fake_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
+            count = discover_site("https://example.com")
+
+        assert count == 3  # posts (2) + mixed (1) selected; noise excluded
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +291,9 @@ class TestFlatUrlSites:
     Sites like justinesnacks.com (Yoast SEO / WordPress) publish recipe posts at
     flat top-level slugs: https://justinesnacks.com/vanilla-latte-cake/
 
-    There is no /recipe/ path segment, so the default url_filter_pattern=r"/recipe"
-    drops every URL from the post-sitemap even when the probe correctly confirms it
-    contains recipes.  Probe-confirmed sitemaps must bypass the URL filter.
+    There is no /recipe/ path segment. The hit-rate approach handles this
+    correctly: the post-sitemap will have a high hit rate and all its URLs
+    (including flat-slug ones) are included without any URL filtering.
     """
 
     def test_flat_url_recipes_discovered_when_post_sitemap_confirmed(self, mem_db):
@@ -280,13 +308,14 @@ class TestFlatUrlSites:
         root = _index(None, [posts])
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", return_value=True):
+             patch("recipes.discovery._probe_sitemap", return_value=(10, 10)), \
+             patch("recipes.discovery._check_reachable", return_value=True):
             count = discover_site("https://justinesnacks.com")
 
-        assert count == 3  # all flat-slug recipes included; currently 0 due to /recipe filter
+        assert count == 3
 
     def test_non_post_sitemaps_excluded_by_probe(self, mem_db):
-        """Category and tag sitemaps should be excluded by probe, not URL filter."""
+        """Category sitemaps with 0% hit rate are excluded when post sitemap is ≥ HIGH."""
         posts = _leaf(
             "https://justinesnacks.com/post-sitemap.xml",
             [
@@ -303,11 +332,12 @@ class TestFlatUrlSites:
         )
         root = _index(None, [posts, categories])
 
-        def fake_probe(sitemap, **_):
-            return sitemap is posts  # only the post sitemap has real recipes
+        def fake_probe(sitemap):
+            return (10, 10) if sitemap is posts else (10, 0)
 
         with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=root), \
-             patch("recipes.discovery._probe_has_recipes", side_effect=fake_probe):
+             patch("recipes.discovery._probe_sitemap", side_effect=fake_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
             count = discover_site("https://justinesnacks.com")
 
-        assert count == 2  # only the 2 post URLs; category sitemap excluded by probe
+        assert count == 2  # only the 2 post URLs; category sitemap excluded

@@ -1,5 +1,6 @@
 import logging
-import re
+import math
+import random
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
@@ -14,7 +15,10 @@ from .scraper import fetch_html, parse_recipe
 log = logging.getLogger(__name__)
 
 _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
-_PROBE_SAMPLE = 3  # URLs to try per sitemap when probing
+
+# Hit-rate thresholds for sitemap classification
+_HIGH_HIT_RATE = 0.40   # ≥40%  → dedicated recipe sitemap
+_MEDIUM_HIT_RATE = 0.10  # ≥10%  → mixed sitemap with meaningful recipe content
 
 
 def _collect_leaf_sitemaps(node) -> list:
@@ -28,6 +32,43 @@ def _collect_leaf_sitemaps(node) -> list:
     for child in node.sub_sitemaps:
         leaves.extend(_collect_leaf_sitemaps(child))
     return leaves
+
+
+def _log_sample_size(n_total: int, min_n: int = 5, max_n: int = 20) -> int:
+    """Logarithmic sample size: grows slowly so large sitemaps stay cheap."""
+    if n_total <= min_n:
+        return n_total
+    return min(max_n, max(min_n, int(math.log2(n_total) * 2.5)))
+
+
+def _probe_sitemap(sitemap) -> tuple[int, int]:
+    """
+    Randomly sample URLs from a sitemap and count recipe hits.
+    Returns (n_sampled, n_hits).
+    """
+    all_urls = [p.url for p in sitemap.all_pages() if p.url]
+    n_total = len(all_urls)
+    n_sample = _log_sample_size(n_total)
+    if n_sample == 0:
+        return 0, 0
+
+    sample = random.sample(all_urls, n_sample) if n_total > n_sample else all_urls
+    hits = 0
+    for url in sample:
+        try:
+            html = fetch_html(url)
+            data = parse_recipe(html, url)
+            if _is_valid_recipe(data):
+                hits += 1
+                log.debug("  probe hit: %s", url)
+            else:
+                log.debug("  probe miss (empty fields): %s", url)
+        except (NoSchemaFoundInWildMode, RecipeSchemaNotFound):
+            log.debug("  probe miss (no schema): %s", url)
+        except Exception as exc:
+            log.debug("  probe error (%s): %s", type(exc).__name__, url)
+
+    return n_sample, hits
 
 
 def _urls_from_sitemap_url(sitemap_url: str, hostname: str) -> list[tuple[str, str]]:
@@ -67,50 +108,46 @@ def _is_valid_recipe(data: dict) -> bool:
     return bool(data.get("title")) and bool(data.get("ingredients") or data.get("instructions"))
 
 
-def _probe_has_recipes(sitemap, sample_size: int = _PROBE_SAMPLE) -> bool:
+def _check_reachable(site_url: str, timeout: float = 8.0) -> bool:
     """
-    Sample up to sample_size URLs from a sitemap and attempt to parse each as a
-    recipe with meaningful content. Returns True as soon as one passes.
-
-    Handles three failure modes:
-    - parse_recipe raises NoSchemaFound*: page has no recipe markup
-    - parse_recipe returns empty fields: page parsed but has no real recipe data
-      (e.g. a collection or tag page)
-    - network/other errors: skip and try the next URL
+    Quick connectivity probe before handing off to usp.
+    Returns False only on network-level failures (unreachable / connect timeout).
+    HTTP error codes (4xx/5xx) are not treated as unreachable.
     """
-    count = 0
-    for page in sitemap.all_pages():
-        if not page.url or count >= sample_size:
-            break
-        count += 1
-        try:
-            html = fetch_html(page.url)
-            data = parse_recipe(html, page.url)
-            if _is_valid_recipe(data):
-                log.info("  probe hit: %s", page.url)
-                return True
-            log.debug("  probe miss (empty fields): %s", page.url)
-        except (NoSchemaFoundInWildMode, RecipeSchemaNotFound):
-            log.debug("  probe miss (no schema): %s", page.url)
-        except Exception as exc:
-            log.debug("  probe error (%s): %s", type(exc).__name__, page.url)
-    return False
+    try:
+        requests.head(
+            site_url,
+            timeout=timeout,
+            allow_redirects=True,
+            headers={"User-Agent": settings.user_agent},
+        )
+        return True
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+        log.warning("Site unreachable, skipping discovery: %s", exc)
+        return False
 
 
-def discover_site(site_url: str, url_filter: str | None = None) -> int:
+def discover_site(site_url: str) -> int:
     """
-    Crawl sitemaps for a site via robots.txt, filter recipe URLs, insert into db.
+    Crawl sitemaps for a site via robots.txt, select recipe-rich sitemaps by
+    hit-rate, and insert all their URLs into the db.
 
-    usp reads robots.txt automatically and follows the sitemap tree. Each leaf
-    sitemap is probed by fetching a small sample of its URLs and attempting to
-    parse them as recipes. Only sitemaps that contain at least one parseable
-    recipe are used. Falls back to all leaf sitemaps if the probe finds none.
+    Each leaf sitemap is probed with a logarithmic random sample.  Sitemaps are
+    ranked by recipe hit-rate and selected as follows:
+      - If the best sitemap is ≥ HIGH_HIT_RATE (40 %): keep all sitemaps
+        with rate ≥ MEDIUM_HIT_RATE (10 %) — these are the recipe-specific ones.
+      - If the best rate is positive but below HIGH_HIT_RATE: keep everything
+        with at least one hit (the site may have no dedicated recipe sitemap).
+      - If no hits at all: fall back to all leaf sitemaps (the scraper will
+        filter non-recipes at parse time).
 
     Returns the number of new URLs discovered.
     """
-    pattern = re.compile(url_filter or settings.url_filter_pattern, re.IGNORECASE)
     hostname = urlparse(site_url).netloc
-    log.info("Crawling sitemaps for %s (filter: %s)", hostname, pattern.pattern)
+    log.info("Crawling sitemaps for %s", hostname)
+
+    if not _check_reachable(site_url):
+        return 0
 
     tree = sitemap_tree_for_homepage(site_url)
 
@@ -119,26 +156,37 @@ def discover_site(site_url: str, url_filter: str | None = None) -> int:
     for s in leaf_sitemaps:
         log.debug("  sitemap: %s", s.url)
 
-    # Probe each sitemap to find the ones that actually contain recipes
-    confirmed = [s for s in leaf_sitemaps if _probe_has_recipes(s)]
-    if confirmed:
-        log.info("Using %d recipe sitemap(s) (confirmed by probe)", len(confirmed))
-        selected = confirmed
-    else:
-        log.warning("Probe found no recipe sitemaps, falling back to all with URL filter")
-        selected = leaf_sitemaps
+    # Probe each sitemap and compute hit rate
+    probed: list[tuple[object, float]] = []  # (sitemap, hit_rate)
+    for s in leaf_sitemaps:
+        n_sampled, n_hits = _probe_sitemap(s)
+        rate = n_hits / n_sampled if n_sampled else 0.0
+        log.info("  probe %s: %d/%d hits (%.0f%%)", s.url, n_hits, n_sampled, rate * 100)
+        probed.append((s, rate))
 
-    # The URL filter is a heuristic for fallback mode only.  When the probe has
-    # already confirmed that a sitemap contains real recipes we trust all of its
-    # URLs — applying the filter would drop recipes from sites that use flat
-    # slugs (e.g. justinesnacks.com/vanilla-latte-cake/) with no /recipe/ segment.
-    apply_url_filter = not confirmed
+    max_rate = max((r for _, r in probed), default=0.0)
+
+    if max_rate >= _HIGH_HIT_RATE:
+        selected = [s for s, r in probed if r >= _MEDIUM_HIT_RATE]
+        log.info(
+            "High-confidence recipe sitemaps found (best %.0f%%); using %d sitemap(s) with ≥%.0f%% hit rate",
+            max_rate * 100, len(selected), _MEDIUM_HIT_RATE * 100,
+        )
+    elif max_rate > 0:
+        selected = [s for s, r in probed if r > 0]
+        log.info(
+            "No dedicated recipe sitemap (best %.0f%%); using %d sitemap(s) with any hits",
+            max_rate * 100, len(selected),
+        )
+    else:
+        selected = leaf_sitemaps
+        log.warning("Probe found no recipe hits; falling back to all %d sitemap(s)", len(selected))
 
     urls: list[tuple[str, str]] = []
     for sitemap in selected:
         for page in sitemap.all_pages():
             url = page.url
-            if url and (not apply_url_filter or pattern.search(url)):
+            if url:
                 log.debug("  + %s", url)
                 urls.append((url, hostname))
 
@@ -151,10 +199,9 @@ def discover_site(site_url: str, url_filter: str | None = None) -> int:
     return inserted
 
 
-def discover_all_sites(url_filter: str | None = None) -> dict[str, int]:
+def discover_all_sites() -> dict[str, int]:
     """Discover recipes from all configured sites. Returns {site: new_url_count}."""
     results: dict[str, int] = {}
     for site in settings.site_list:
-        count = discover_site(site, url_filter)
-        results[site] = count
+        results[site] = discover_site(site)
     return results
