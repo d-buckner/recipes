@@ -31,6 +31,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/recipes"]
 
+[tool.uv.sources]
+recipe-scrapers = { git = "https://github.com/d-buckner/recipe-scrapers.git", branch = "main" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["e2e: end-to-end tests (slow, require live network)"]

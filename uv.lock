@@ -1041,15 +1041,11 @@ wheels = [
 [[package]]
 name = "recipe-scrapers"
 version = "15.11.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/d-buckner/recipe-scrapers.git?branch=main#f728bbc1b95a345eaea4ed4497233e31efb8a20d" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "extruct" },
     { name = "isodate" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/93/09/e9983f4fd1cf09126df8388c48da593e200c12df71a22c807436d00f8ac5/recipe_scrapers-15.11.0.tar.gz", hash = "sha256:1290598a776109e26af4daeeea649c85097c85ac29c608fe73dab534e6902efd", size = 144566, upload-time = "2025-12-10T15:53:18.115Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/5a/ff6ba9552d7551c719812d2e9d9847c57abee4ffa11941d84f87b84a8764/recipe_scrapers-15.11.0-py3-none-any.whl", hash = "sha256:9e56f1e56ff2c7dfb16b88422beda90f7b3a3896617329ed934d74c1b5ee8b10", size = 307227, upload-time = "2025-12-10T15:53:16.385Z" },
 ]
 
 [[package]]
@@ -1093,7 +1089,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "recipe-scrapers", specifier = ">=14.0" },
+    { name = "recipe-scrapers", git = "https://github.com/d-buckner/recipe-scrapers.git?branch=main" },
     { name = "requests", specifier = ">=2.31" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ultimate-sitemap-parser", specifier = ">=0.4" },
