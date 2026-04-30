@@ -13,6 +13,8 @@ WORKDIR /app
 
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin recipes
 
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 COPY src/ ./src/
 
