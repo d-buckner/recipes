@@ -26,6 +26,50 @@ THUMBNAIL_WIDTH = 480
 HERO_WIDTH = 1200
 
 
+def get_crawl_delay(hostname: str) -> float | None:
+    """Fetch robots.txt for hostname and return the applicable Crawl-delay in seconds.
+
+    Checks for our specific user-agent first, then falls back to '*'.
+    Returns None if robots.txt is unreachable, missing the directive, or unparseable.
+    """
+    try:
+        resp = requests.get(
+            f"https://{hostname}/robots.txt",
+            headers={"User-Agent": settings.user_agent},
+            timeout=10,
+        )
+        if not resp.ok:
+            return None
+    except Exception:
+        return None
+
+    our_agent = settings.user_agent.split("/")[0].lower()
+    delays: dict[str, float] = {}
+    current_agents: list[str] = []
+
+    for raw_line in resp.text.splitlines():
+        line = raw_line.split("#")[0].strip()
+        if not line:
+            current_agents = []
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "user-agent":
+            current_agents.append(value.lower())
+        elif key == "crawl-delay" and current_agents:
+            try:
+                delay = float(value)
+                for agent in current_agents:
+                    delays.setdefault(agent, delay)
+            except ValueError:
+                pass
+
+    if our_agent in delays:
+        return delays[our_agent]
+    return delays.get("*")
+
+
 def fetch_html(url: str) -> str:
     headers = {"User-Agent": settings.user_agent}
     log.debug("GET %s", url)
@@ -179,8 +223,14 @@ def run_workers(delay: float | None = None) -> dict[str, int]:
     log.info("Starting workers for: %s", sites_to_start)
 
     def _run_and_release(site: str) -> dict[str, int]:
+        crawl_delay = get_crawl_delay(site)
+        if crawl_delay is not None:
+            log.info("robots.txt Crawl-delay for %s: %.1fs", site, crawl_delay)
+        else:
+            crawl_delay = actual_delay
+            log.info("No Crawl-delay in robots.txt for %s, using default %.1fs", site, crawl_delay)
         try:
-            return run_worker(actual_delay, site)
+            return run_worker(crawl_delay, site)
         finally:
             with _active_lock:
                 _active_sites.discard(site)

@@ -1041,7 +1041,7 @@ wheels = [
 [[package]]
 name = "recipe-scrapers"
 version = "15.11.0"
-source = { git = "https://github.com/d-buckner/recipe-scrapers.git?branch=main#f728bbc1b95a345eaea4ed4497233e31efb8a20d" }
+source = { git = "https://github.com/d-buckner/recipe-scrapers.git?rev=main#f728bbc1b95a345eaea4ed4497233e31efb8a20d" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "extruct" },
@@ -1089,7 +1089,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "recipe-scrapers", git = "https://github.com/d-buckner/recipe-scrapers.git?branch=main" },
+    { name = "recipe-scrapers", git = "https://github.com/d-buckner/recipe-scrapers.git?rev=main" },
     { name = "requests", specifier = ">=2.31" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ultimate-sitemap-parser", specifier = ">=0.4" },

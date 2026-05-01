@@ -199,6 +199,38 @@ def insert_discovered_urls(urls: list[tuple[str, str]]) -> int:
         return cursor.rowcount
 
 
+def delete_site(hostname: str) -> int:
+    """Delete all non-saved recipes from hostname.
+
+    Recipes that are favorited or in a collection are preserved and remain
+    fully searchable. All other recipes from the site are hard-deleted.
+    Returns the number of recipes deleted.
+    """
+    with get_conn() as conn:
+        conn.execute(
+            """
+            DELETE FROM recipe_fts
+            WHERE id IN (
+                SELECT id FROM recipes
+                WHERE site = ?
+                  AND id NOT IN (SELECT recipe_id FROM favorites)
+                  AND id NOT IN (SELECT recipe_id FROM collection_recipes)
+            )
+            """,
+            (hostname,),
+        )
+        cursor = conn.execute(
+            """
+            DELETE FROM recipes
+            WHERE site = ?
+              AND id NOT IN (SELECT recipe_id FROM favorites)
+              AND id NOT IN (SELECT recipe_id FROM collection_recipes)
+            """,
+            (hostname,),
+        )
+        return cursor.rowcount
+
+
 def list_pending_sites() -> list[str]:
     """Return distinct sites that have at least one discovered recipe."""
     with get_conn() as conn:

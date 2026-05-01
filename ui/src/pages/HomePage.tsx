@@ -54,6 +54,7 @@ export function HomePage() {
   const [showSettings, setShowSettings] = useState(false)
   const [stats, setStats] = useState<ScrapeRunStats | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
+  const [exploreVersion, setExploreVersion] = useState(0)
 
   const { activeFilters, activeFilterCount, toggleFilter, clearFilters } = useUrlFilters()
 
@@ -161,7 +162,7 @@ export function HomePage() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [query, tab, activeFilters])
+  }, [query, tab, activeFilters, exploreVersion])
 
   const handleLoadMore = async () => {
     const nextPage = page + 1
@@ -273,6 +274,7 @@ export function HomePage() {
         <SettingsModal
           stats={stats}
           onClose={() => setShowSettings(false)}
+          onSiteDeleted={() => setExploreVersion((v) => v + 1)}
         />
       )}
 

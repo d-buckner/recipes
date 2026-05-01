@@ -208,6 +208,12 @@ def start_scrape(background_tasks: BackgroundTasks) -> dict[str, str]:
     return {"status": "started"}
 
 
+@app.delete("/sites/{hostname}")
+def delete_site(hostname: str) -> dict:
+    deleted = db.delete_site(hostname)
+    return {"site": hostname, "deleted": deleted}
+
+
 @app.post("/sites/rescrape")
 def rescrape_all(background_tasks: BackgroundTasks) -> dict:
     queued = db.reset_complete_to_discovered()

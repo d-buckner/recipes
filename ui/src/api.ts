@@ -71,6 +71,12 @@ export async function getSupportedSites(): Promise<string[]> {
   return res.json() as Promise<string[]>
 }
 
+export async function deleteSite(hostname: string): Promise<{ site: string; deleted: number }> {
+  const res = await fetch(`${BASE}/sites/${encodeURIComponent(hostname)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete site')
+  return res.json() as Promise<{ site: string; deleted: number }>
+}
+
 export async function discoverSite(siteUrl: string, sitemapUrl?: string): Promise<DiscoverResponse> {
   const res = await fetch(`${BASE}/sites/discover`, {
     method: 'POST',
