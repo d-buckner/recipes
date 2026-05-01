@@ -64,8 +64,8 @@ def test_get_embedding_returns_vector():
         mock_settings.embed_url = "http://localhost:11434"
         responses_mock.add(
             responses_mock.POST,
-            "http://localhost:11434/api/embeddings",
-            json={"embedding": [0.1, 0.2, 0.3]},
+            "http://localhost:11434/v1/embeddings",
+            json={"data": [{"embedding": [0.1, 0.2, 0.3]}]},
             status=200,
         )
         result = get_embedding("chicken soup")
@@ -80,7 +80,7 @@ def test_get_embedding_returns_none_on_network_error():
         mock_settings.embed_url = "http://localhost:11434"
         responses_mock.add(
             responses_mock.POST,
-            "http://localhost:11434/api/embeddings",
+            "http://localhost:11434/v1/embeddings",
             body=ConnectionError("unreachable"),
         )
         result = get_embedding("chicken soup")
@@ -95,7 +95,7 @@ def test_get_embedding_returns_none_on_bad_response():
         mock_settings.embed_url = "http://localhost:11434"
         responses_mock.add(
             responses_mock.POST,
-            "http://localhost:11434/api/embeddings",
+            "http://localhost:11434/v1/embeddings",
             json={"error": "model not loaded"},
             status=200,
         )

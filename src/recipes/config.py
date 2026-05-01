@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     embed_url: str = Field(
         default="http://localhost:11434",
-        description="Base URL of the embedding API (Ollama format: POST /api/embeddings)",
+        description="Base URL of the embedding API (OpenAI-compatible: POST /v1/embeddings)",
     )
     embed_model: str = Field(
         default="",
