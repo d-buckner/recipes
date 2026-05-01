@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,19 @@ class Settings(BaseSettings):
     max_workers: int = 1
     user_agent: str = "RecipeBot/1.0 (+https://github.com/local/recipes)"
     url_filter_pattern: str = r"/recipe"
+
+    embed_url: str = Field(
+        default="http://localhost:11434",
+        description="Base URL of the embedding API (Ollama format: POST /api/embeddings)",
+    )
+    embed_model: str = Field(
+        default="",
+        description="Embedding model name, e.g. 'nomic-embed-text'. Empty = disabled.",
+    )
+    embed_dim: int = Field(
+        default=768,
+        description="Vector dimension — must match the chosen model.",
+    )
 
     @property
     def site_list(self) -> list[str]:

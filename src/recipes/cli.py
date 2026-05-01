@@ -2,7 +2,7 @@ import logging
 
 import click
 
-from . import db, discovery, scraper
+from . import db, discovery, embeddings, scraper
 from .config import settings
 
 
@@ -71,6 +71,47 @@ def serve(host: str, port: int, reload: bool) -> None:
     """Start the recipe API server."""
     import uvicorn
     uvicorn.run("recipes.api:create_app", factory=True, host=host, port=port, reload=reload)
+
+
+@cli.command()
+@click.option("--reset", is_flag=True, default=False, help="Re-embed all complete recipes, not just missing ones.")
+@click.option("--batch-size", default=50, show_default=True, help="Number of recipes to process per batch.")
+def embed(reset: bool, batch_size: int) -> None:
+    """Generate embeddings for recipes (requires RECIPES_EMBED_MODEL)."""
+    if not settings.embed_model:
+        click.echo("RECIPES_EMBED_MODEL is not set — embedding is disabled.")
+        raise SystemExit(1)
+
+    if reset:
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM vec_recipes")
+        click.echo("Cleared all existing embeddings.")
+
+    ids = db.get_unembedded_ids()
+    if not ids:
+        click.echo("No recipes need embedding.")
+        return
+
+    click.echo(f"Embedding {len(ids)} recipe(s) using model '{settings.embed_model}'...")
+    succeeded = 0
+    failed = 0
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i: i + batch_size]
+        for recipe_id in batch:
+            recipe = db.get_recipe_by_id(recipe_id)
+            if recipe is None or recipe.recipe_json is None:
+                failed += 1
+                continue
+            text = embeddings.build_recipe_text(recipe.recipe_json)
+            vector = embeddings.get_embedding(text)
+            if vector:
+                db.store_embedding(recipe_id, vector)
+                succeeded += 1
+            else:
+                failed += 1
+        click.echo(f"  [{min(i + batch_size, len(ids))}/{len(ids)}] succeeded={succeeded} failed={failed}")
+
+    click.echo(f"\nDone. Embedded: {succeeded}, Failed: {failed}")
 
 
 @cli.command()

@@ -1,9 +1,12 @@
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from typing import Generator
 
 from .models import Collection, RecipeRow, RecipeStatus, SearchResult, ScrapeRunStats
+
+log = logging.getLogger(__name__)
 
 _db_path: str = "recipes.db"
 
@@ -15,10 +18,19 @@ def configure(db_path: str) -> None:
 
 @contextmanager
 def get_conn() -> Generator[sqlite3.Connection, None, None]:
+    from .config import settings
     conn = sqlite3.connect(_db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    if settings.embed_model:
+        try:
+            import sqlite_vec
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+        except Exception as exc:
+            log.warning("sqlite-vec load failed (embedding disabled for this connection): %s", exc)
     try:
         yield conn
         conn.commit()
@@ -107,6 +119,10 @@ CREATE TABLE IF NOT EXISTS collection_recipes (
     added_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (collection_id, recipe_id)
 );
+
+CREATE TABLE IF NOT EXISTS recipe_embedding_meta (
+    dim INTEGER NOT NULL
+);
 """
 
 
@@ -140,7 +156,41 @@ def _migrate_list_fields() -> None:
                 )
 
 
+def _ensure_vec_table(conn: sqlite3.Connection, dim: int) -> None:
+    """Create the vec_recipes virtual table if it does not yet exist.
+
+    Checks recipe_embedding_meta for a stored dimension; warns and aborts if
+    a different dim is already recorded (user must drop vec_recipes manually or
+    run `recipes embed --reset` after clearing the table).
+    """
+    meta = conn.execute("SELECT dim FROM recipe_embedding_meta LIMIT 1").fetchone()
+    if meta is not None:
+        stored_dim = meta["dim"]
+        if stored_dim != dim:
+            log.warning(
+                "Embedding dim mismatch: stored=%d, configured=%d. "
+                "Semantic search disabled for this session. "
+                "Drop vec_recipes and recipe_embedding_meta to reset.",
+                stored_dim,
+                dim,
+            )
+            return
+        # Dim matches — table already exists, nothing to do.
+        return
+    # First run: create the virtual table and record the dim.
+    conn.executescript(
+        f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_recipes USING vec0(
+            recipe_id integer primary key,
+            embedding float[{dim}]
+        );
+        INSERT INTO recipe_embedding_meta(dim) VALUES ({dim});
+        """
+    )
+
+
 def init_db(db_path: str | None = None) -> None:
+    from .config import settings
     if db_path:
         configure(db_path)
     with get_conn() as conn:
@@ -151,6 +201,8 @@ def init_db(db_path: str | None = None) -> None:
                 conn.execute(migration)
             except sqlite3.OperationalError:
                 pass
+        if settings.embed_model:
+            _ensure_vec_table(conn, settings.embed_dim)
     _migrate_list_fields()
 
 
@@ -394,9 +446,11 @@ def search_recipes(
     cuisine: list[str] | None = None,
     category: list[str] | None = None,
     site: list[str] | None = None,
+    min_time: int | None = None,
+    max_time: int | None = None,
 ) -> list[SearchResult]:
     extra_conditions: list[str] = []
-    extra_params: list[str] = []
+    extra_params: list[str | int] = []
     if author:
         extra_conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
         extra_params.extend(author)
@@ -409,6 +463,14 @@ def search_recipes(
     if site:
         extra_conditions.append(f"r.site IN {_in_placeholders(site)}")
         extra_params.extend(site)
+    if min_time is not None or max_time is not None:
+        extra_conditions.append("json_extract(r.recipe_json, '$.total_time') IS NOT NULL")
+    if min_time is not None:
+        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) >= ?")
+        extra_params.append(min_time)
+    if max_time is not None:
+        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) <= ?")
+        extra_params.append(max_time)
     extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
     with get_conn() as conn:
         rows = conn.execute(
@@ -542,6 +604,8 @@ def list_recipes(
     cuisine: list[str] | None = None,
     category: list[str] | None = None,
     site: list[str] | None = None,
+    min_time: int | None = None,
+    max_time: int | None = None,
 ) -> list[SearchResult]:
     conditions = ["r.status = 'complete'"]
     params: list[str | int] = []
@@ -557,6 +621,14 @@ def list_recipes(
     if site:
         conditions.append(f"r.site IN {_in_placeholders(site)}")
         params.extend(site)
+    if min_time is not None or max_time is not None:
+        conditions.append("json_extract(r.recipe_json, '$.total_time') IS NOT NULL")
+    if min_time is not None:
+        conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) >= ?")
+        params.append(min_time)
+    if max_time is not None:
+        conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) <= ?")
+        params.append(max_time)
     where = " AND ".join(conditions)
     with get_conn() as conn:
         rows = conn.execute(
@@ -651,6 +723,142 @@ def list_filter_options() -> dict[str, list[dict[str, str | int]]]:
         "author": [{"value": r["value"], "count": r["cnt"]} for r in author_rows],
         "site": [{"value": r["value"], "count": r["cnt"]} for r in site_rows],
     }
+
+
+def store_embedding(recipe_id: int, vector: list[float]) -> None:
+    """Insert or replace the embedding for *recipe_id*."""
+    import struct
+    blob = struct.pack(f"{len(vector)}f", *vector)
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO vec_recipes(recipe_id, embedding) VALUES (?, ?)",
+            (recipe_id, blob),
+        )
+
+
+def get_unembedded_ids() -> list[int]:
+    """Return IDs of complete recipes that have no row in vec_recipes."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id FROM recipes r
+            LEFT JOIN vec_recipes v ON v.recipe_id = r.id
+            WHERE r.status = 'complete' AND v.recipe_id IS NULL
+            ORDER BY r.id
+            """
+        ).fetchall()
+        return [row["id"] for row in rows]
+
+
+def semantic_search(
+    query_vector: list[float],
+    limit: int = 20,
+    offset: int = 0,
+    author: list[str] | None = None,
+    cuisine: list[str] | None = None,
+    category: list[str] | None = None,
+    site: list[str] | None = None,
+    min_time: int | None = None,
+    max_time: int | None = None,
+) -> list[SearchResult]:
+    """KNN search via vec0, then join back to recipes with optional filters."""
+    import struct
+    blob = struct.pack(f"{len(query_vector)}f", *query_vector)
+
+    extra_conditions: list[str] = []
+    extra_params: list = []
+    if author:
+        extra_conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
+        extra_params.extend(author)
+    if cuisine:
+        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value IN {_in_placeholders(cuisine)})")
+        extra_params.extend(cuisine)
+    if category:
+        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value IN {_in_placeholders(category)})")
+        extra_params.extend(category)
+    if site:
+        extra_conditions.append(f"r.site IN {_in_placeholders(site)}")
+        extra_params.extend(site)
+    if min_time is not None or max_time is not None:
+        extra_conditions.append("json_extract(r.recipe_json, '$.total_time') IS NOT NULL")
+    if min_time is not None:
+        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) >= ?")
+        extra_params.append(min_time)
+    if max_time is not None:
+        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) <= ?")
+        extra_params.append(max_time)
+    extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
+
+    # vec0 KNN: fetch (limit+offset)*2 candidates to allow post-filter headroom
+    candidates = (limit + offset) * 2
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT r.id, r.url, r.site,
+                   json_extract(r.recipe_json, '$.title') AS title,
+                   json_extract(r.recipe_json, '$.description') AS description,
+                   json_extract(r.recipe_json, '$.total_time') AS total_time,
+                   json_extract(r.recipe_json, '$.yields') AS yields,
+                   json_extract(r.recipe_json, '$.image') AS image,
+                   json_extract(r.recipe_json, '$.site_name') AS site_name,
+                   json_extract(r.recipe_json, '$.author') AS author,
+                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
+                   json_extract(r.recipe_json, '$.category') AS category,
+                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
+                   CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
+                   COALESCE(
+                     (SELECT GROUP_CONCAT(c.name, '||')
+                      FROM collection_recipes cr JOIN collections c ON c.id = cr.collection_id
+                      WHERE cr.recipe_id = r.id),
+                     ''
+                   ) AS collection_names
+            FROM vec_recipes v
+            JOIN recipes r ON r.id = v.recipe_id
+            LEFT JOIN favorites f ON f.recipe_id = r.id
+            WHERE v.embedding MATCH ? AND k = ?
+              AND r.status = 'complete'{extra_where}
+            LIMIT ? OFFSET ?
+            """,
+            [blob, candidates, *extra_params, limit, offset],
+        ).fetchall()
+        return [_row_to_search_result(r) for r in rows]
+
+
+def hybrid_search(
+    fts_query: str,
+    query_vector: list[float],
+    limit: int = 20,
+    offset: int = 0,
+    author: list[str] | None = None,
+    cuisine: list[str] | None = None,
+    category: list[str] | None = None,
+    site: list[str] | None = None,
+    min_time: int | None = None,
+    max_time: int | None = None,
+) -> list[SearchResult]:
+    """Merge FTS5 and semantic results using Reciprocal Rank Fusion (k=60)."""
+    candidates = limit * 3
+    filter_kwargs = dict(author=author, cuisine=cuisine, category=category, site=site, min_time=min_time, max_time=max_time)
+
+    fts_results = search_recipes(fts_query, limit=candidates, offset=0, **filter_kwargs)
+    sem_results = semantic_search(query_vector, limit=candidates, offset=0, **filter_kwargs)
+
+    # Build RRF scores: score(r) = sum of 1/(k + rank) across lists
+    k = 60
+    scores: dict[int, float] = {}
+    for rank, result in enumerate(fts_results, start=1):
+        scores[result.id] = scores.get(result.id, 0.0) + 1.0 / (k + rank)
+    for rank, result in enumerate(sem_results, start=1):
+        scores[result.id] = scores.get(result.id, 0.0) + 1.0 / (k + rank)
+
+    # Build a unified result map (prefer fts_results for full data)
+    result_map: dict[int, SearchResult] = {r.id: r for r in sem_results}
+    result_map.update({r.id: r for r in fts_results})
+
+    # Sort by descending RRF score, apply offset+limit
+    ranked_ids = sorted(scores, key=lambda rid: scores[rid], reverse=True)
+    page_ids = ranked_ids[offset: offset + limit]
+    return [result_map[rid] for rid in page_ids if rid in result_map]
 
 
 def create_collection(name: str) -> int:

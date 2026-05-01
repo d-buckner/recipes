@@ -9,7 +9,7 @@ from PIL import Image
 from recipe_scrapers import scrape_html
 from recipe_scrapers._exceptions import NoSchemaFoundInWildMode, RecipeSchemaNotFound, WebsiteNotImplementedError
 
-from . import db
+from . import db, embeddings
 from .config import settings
 from .models import RecipeRow
 
@@ -159,6 +159,11 @@ def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
         thumbnail, hero = download_images(recipe_json["image"]) if recipe_json.get("image") else (None, None)
         db.save_recipe(recipe.id, recipe_json, thumbnail, hero)
         log.info("[%d] OK: %s", recipe.id, recipe_json["title"])
+        if settings.embed_model:
+            text = embeddings.build_recipe_text(recipe_json)
+            vector = embeddings.get_embedding(text)
+            if vector:
+                db.store_embedding(recipe.id, vector)
         return True
     except (NoSchemaFoundInWildMode, RecipeSchemaNotFound) as exc:
         log.warning("[%d] FAIL (no schema): %s", recipe.id, exc)

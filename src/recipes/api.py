@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -7,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from . import db, discovery, scraper
+from . import db, discovery, embeddings, scraper
 from .config import settings
 from .models import Collection, SearchResult, ScrapeRunStats
 from .search import sanitize_fts_query
@@ -79,9 +80,30 @@ def search_recipes(
     cuisine: list[str] = Query(default=[]),
     category: list[str] = Query(default=[]),
     site: list[str] = Query(default=[]),
+    min_time: int | None = Query(default=None, ge=0),
+    max_time: int | None = Query(default=None, ge=0),
+    mode: Literal["keyword", "semantic", "hybrid"] = Query(default="hybrid"),
 ) -> list[SearchResult]:
     safe_query = sanitize_fts_query(q)
-    return db.search_recipes(safe_query, limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site)
+    filter_kwargs = dict(author=author, cuisine=cuisine, category=category, site=site, min_time=min_time, max_time=max_time)
+
+    if mode == "keyword":
+        return db.search_recipes(safe_query, limit=limit, offset=offset, **filter_kwargs)
+
+    # Attempt to embed the query for semantic/hybrid modes
+    vector: list[float] | None = None
+    if settings.embed_model:
+        vector = embeddings.get_embedding(q)
+
+    if mode == "semantic":
+        if vector is None:
+            return db.search_recipes(safe_query, limit=limit, offset=offset, **filter_kwargs)
+        return db.semantic_search(vector, limit=limit, offset=offset, **filter_kwargs)
+
+    # hybrid (default): use FTS-only if embedding unavailable
+    if vector is None:
+        return db.search_recipes(safe_query, limit=limit, offset=offset, **filter_kwargs)
+    return db.hybrid_search(safe_query, vector, limit=limit, offset=offset, **filter_kwargs)
 
 
 @app.get("/recipes", response_model=list[SearchResult])
@@ -92,8 +114,10 @@ def list_recipes(
     cuisine: list[str] = Query(default=[]),
     category: list[str] = Query(default=[]),
     site: list[str] = Query(default=[]),
+    min_time: int | None = Query(default=None, ge=0),
+    max_time: int | None = Query(default=None, ge=0),
 ) -> list[SearchResult]:
-    return db.list_recipes(limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site)
+    return db.list_recipes(limit=limit, offset=offset, author=author, cuisine=cuisine, category=category, site=site, min_time=min_time, max_time=max_time)
 
 
 @app.get("/recipes/{recipe_id}", response_model=RecipeResponse)
