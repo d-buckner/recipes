@@ -10,6 +10,10 @@ interface UseUrlFiltersResult {
   toggleFilter: (type: TagFilterType, value: string) => void
   removeFilter: (type: TagFilterType) => void
   clearFilters: () => void
+  minTime: number | null
+  maxTime: number | null
+  setMinTime: (value: number | null) => void
+  setMaxTime: (value: number | null) => void
 }
 
 export function useUrlFilters(): UseUrlFiltersResult {
@@ -24,8 +28,12 @@ export function useUrlFilters(): UseUrlFiltersResult {
     return filters
   }, [searchParams])
 
-  // Count active filter types (not individual values) for the button label
-  const activeFilterCount = Object.keys(activeFilters).length
+  const minTime = searchParams.get('min_time') !== null ? Number(searchParams.get('min_time')) : null
+  const maxTime = searchParams.get('max_time') !== null ? Number(searchParams.get('max_time')) : null
+
+  // Count active filter types (not individual values) for the button label.
+  // Time min/max together count as one filter type.
+  const activeFilterCount = Object.keys(activeFilters).length + (minTime !== null || maxTime !== null ? 1 : 0)
 
   const toggleFilter = (type: TagFilterType, value: string) => {
     setSearchParams((prev) => {
@@ -58,5 +66,23 @@ export function useUrlFilters(): UseUrlFiltersResult {
     setSearchParams(new URLSearchParams())
   }
 
-  return { activeFilters, activeFilterCount, toggleFilter, removeFilter, clearFilters }
+  const setMinTime = (value: number | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value === null) next.delete('min_time')
+      else next.set('min_time', String(value))
+      return next
+    })
+  }
+
+  const setMaxTime = (value: number | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value === null) next.delete('max_time')
+      else next.set('max_time', String(value))
+      return next
+    })
+  }
+
+  return { activeFilters, activeFilterCount, toggleFilter, removeFilter, clearFilters, minTime, maxTime, setMinTime, setMaxTime }
 }

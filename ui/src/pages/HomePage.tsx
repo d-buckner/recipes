@@ -17,7 +17,7 @@ import {
 } from '../api'
 
 import { AddSiteDropdown } from '../components/AddSiteDropdown'
-import { FilterPanel } from '../components/FilterPanel'
+import { FilterPanel, formatMinutes } from '../components/FilterPanel'
 import { Modal } from '../components/Modal'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
@@ -56,7 +56,7 @@ export function HomePage() {
   const [toast, setToast] = useState<ToastState | null>(null)
   const [exploreVersion, setExploreVersion] = useState(0)
 
-  const { activeFilters, activeFilterCount, toggleFilter, clearFilters } = useUrlFilters()
+  const { activeFilters, activeFilterCount, toggleFilter, clearFilters, minTime, maxTime, setMinTime, setMaxTime } = useUrlFilters()
 
   // Collections state
   const [collections, setCollections] = useState<Collection[]>([])
@@ -138,7 +138,7 @@ export function HomePage() {
 
     if (!query.trim()) {
       setLoading(true)
-      listRecipes(LIMIT, 0, activeFilters)
+      listRecipes(LIMIT, 0, activeFilters, minTime, maxTime)
         .then((results) => {
           setRecipes(results)
           setHasMore(results.length === LIMIT)
@@ -150,7 +150,7 @@ export function HomePage() {
 
     setLoading(true)
     debounceRef.current = setTimeout(() => {
-      searchRecipes(query, LIMIT, 0, activeFilters)
+      searchRecipes(query, LIMIT, 0, activeFilters, minTime, maxTime)
         .then((results) => {
           setRecipes(results)
           setHasMore(results.length === LIMIT)
@@ -162,7 +162,7 @@ export function HomePage() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [query, tab, activeFilters, exploreVersion])
+  }, [query, tab, activeFilters, exploreVersion, minTime, maxTime])
 
   const handleLoadMore = async () => {
     const nextPage = page + 1
@@ -172,9 +172,9 @@ export function HomePage() {
       if (tab === 'collections' && selectedCollection) {
         results = await listCollectionRecipes(selectedCollection.id, LIMIT, nextPage * LIMIT)
       } else if (query.trim()) {
-        results = await searchRecipes(query, LIMIT, nextPage * LIMIT, activeFilters)
+        results = await searchRecipes(query, LIMIT, nextPage * LIMIT, activeFilters, minTime, maxTime)
       } else {
-        results = await listRecipes(LIMIT, nextPage * LIMIT, activeFilters)
+        results = await listRecipes(LIMIT, nextPage * LIMIT, activeFilters, minTime, maxTime)
       }
       setRecipes((prev) => [...prev, ...results])
       setHasMore(results.length === LIMIT)
@@ -280,7 +280,14 @@ export function HomePage() {
 
       {tab === 'explore' && showFilterPanel && (
         <Modal title="Filters" onClose={() => setShowFilterPanel(false)} maxWidth={460}>
-          <FilterPanel activeFilters={activeFilters} onToggle={toggleFilter} />
+          <FilterPanel
+            activeFilters={activeFilters}
+            onToggle={toggleFilter}
+            minTime={minTime}
+            maxTime={maxTime}
+            onMinTimeChange={setMinTime}
+            onMaxTimeChange={setMaxTime}
+          />
         </Modal>
       )}
 
@@ -327,7 +334,23 @@ export function HomePage() {
                     </span>
                   ))
                 )}
-                {Object.values(activeFilters).reduce((n, vals) => n + (vals?.length ?? 0), 0) > 1 && (
+                {(minTime !== null || maxTime !== null) && (
+                  <span className="active-filter-chip">
+                    ⏱ {minTime !== null && maxTime !== null
+                      ? `${formatMinutes(minTime)}–${formatMinutes(maxTime)}`
+                      : minTime !== null
+                        ? `≥ ${formatMinutes(minTime)}`
+                        : `≤ ${formatMinutes(maxTime!)}`}
+                    <button
+                      className="active-filter-clear"
+                      onClick={() => { setMinTime(null); setMaxTime(null) }}
+                      title="Remove time filter"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+                {(Object.values(activeFilters).reduce((n, vals) => n + (vals?.length ?? 0), 0) + (minTime !== null ? 1 : 0) + (maxTime !== null ? 1 : 0)) > 1 && (
                   <button className="active-filter-clear-all" onClick={clearFilters}>
                     Clear all
                   </button>

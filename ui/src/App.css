@@ -1620,6 +1620,42 @@ a.recipe-card {
   flex-shrink: 0;
 }
 
+.filter-time-row {
+  display: flex;
+  gap: 12px;
+}
+
+.filter-time-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.filter-time-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.filter-time-select {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.filter-time-select:focus {
+  border-color: var(--red);
+  outline: none;
+}
+
 /* ── Active filter chips (inline in tabs row) ── */
 .active-filter-chip {
   display: inline-flex;

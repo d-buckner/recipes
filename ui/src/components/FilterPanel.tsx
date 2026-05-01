@@ -11,12 +11,27 @@ const SECTIONS: { type: TagFilterType; label: string; emoji: string }[] = [
 
 const TOP_N = 8
 
+// 15-minute increments from 15 min to 5 hours
+const TIME_OPTIONS: number[] = Array.from({ length: 20 }, (_, i) => (i + 1) * 15)
+
+export function formatMinutes(mins: number): string {
+  if (mins < 60) return `${mins} min`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  const hLabel = h === 1 ? '1 hr' : `${h} hrs`
+  return m === 0 ? hLabel : `${hLabel} ${m} min`
+}
+
 interface FilterPanelProps {
   activeFilters: ActiveFilters
   onToggle: (type: TagFilterType, value: string) => void
+  minTime: number | null
+  maxTime: number | null
+  onMinTimeChange: (value: number | null) => void
+  onMaxTimeChange: (value: number | null) => void
 }
 
-export function FilterPanel({ activeFilters, onToggle }: FilterPanelProps) {
+export function FilterPanel({ activeFilters, onToggle, minTime, maxTime, onMinTimeChange, onMaxTimeChange }: FilterPanelProps) {
   const [options, setOptions] = useState<FilterOptions | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState<Partial<Record<TagFilterType, string>>>({})
@@ -24,6 +39,7 @@ export function FilterPanel({ activeFilters, onToggle }: FilterPanelProps) {
     () => new Set(SECTIONS.map(s => s.type).filter(t => (activeFilters[t]?.length ?? 0) > 0))
   )
   const [showAll, setShowAll] = useState<Set<TagFilterType>>(new Set())
+  const [timeExpanded, setTimeExpanded] = useState(() => minTime !== null || maxTime !== null)
 
   useEffect(() => {
     getFilterOptions()
@@ -57,11 +73,92 @@ export function FilterPanel({ activeFilters, onToggle }: FilterPanelProps) {
     return filtered.slice(0, TOP_N)
   }
 
+  const handleMinChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value === '' ? null : Number(e.target.value)
+    onMinTimeChange(val)
+    // Clear max if it's now less than the new min
+    if (val !== null && maxTime !== null && val > maxTime) {
+      onMaxTimeChange(null)
+    }
+  }
+
+  const handleMaxChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value === '' ? null : Number(e.target.value)
+    onMaxTimeChange(val)
+  }
+
+  const maxOptions = minTime !== null ? TIME_OPTIONS.filter(t => t >= minTime) : TIME_OPTIONS
+
+  const hasTimeFilter = minTime !== null || maxTime !== null
+  const timeChipLabel = hasTimeFilter
+    ? minTime !== null && maxTime !== null
+      ? `${formatMinutes(minTime)}–${formatMinutes(maxTime)}`
+      : minTime !== null
+        ? `≥ ${formatMinutes(minTime)}`
+        : `≤ ${formatMinutes(maxTime!)}`
+    : null
+
   if (loading) return <div className="filter-panel-loading">Loading…</div>
   if (!options) return <div className="filter-panel-loading">Failed to load filters.</div>
 
   return (
     <div className="filter-panel-sections">
+      {/* Time filter section */}
+      <div className={`filter-section${timeExpanded ? ' is-expanded' : ''}`}>
+        <button className="filter-section-header" onClick={() => setTimeExpanded(v => !v)}>
+          <span className="filter-section-label">⏱ Time</span>
+          {hasTimeFilter && !timeExpanded && (
+            <span className="filter-section-count">{timeChipLabel}</span>
+          )}
+          <span className="filter-section-chevron">{timeExpanded ? '▾' : '▸'}</span>
+        </button>
+
+        {!timeExpanded && hasTimeFilter && (
+          <div className="filter-section-active">
+            <button
+              className="filter-section-chip"
+              onClick={(e) => { e.stopPropagation(); onMinTimeChange(null); onMaxTimeChange(null) }}
+            >
+              {timeChipLabel} ×
+            </button>
+          </div>
+        )}
+
+        {timeExpanded && (
+          <div className="filter-section-body">
+            <div className="filter-time-row">
+              <div className="filter-time-group">
+                <span className="filter-time-label">Min</span>
+                <select
+                  className="filter-time-select"
+                  value={minTime ?? ''}
+                  onChange={handleMinChange}
+                >
+                  <option value="">Any</option>
+                  {TIME_OPTIONS.map(t => (
+                    <option key={t} value={t}>{formatMinutes(t)}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="filter-time-group">
+                <span className="filter-time-label">Max</span>
+                <select
+                  className="filter-time-select"
+                  value={maxTime ?? ''}
+                  onChange={handleMaxChange}
+                >
+                  <option value="">Any</option>
+                  {maxOptions.map(t => (
+                    <option key={t} value={t}>{formatMinutes(t)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tag filter sections */}
       {SECTIONS.map(({ type, label, emoji }) => {
         const isExpanded = expanded.has(type)
         const isShowingAll = showAll.has(type)

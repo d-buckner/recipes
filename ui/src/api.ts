@@ -11,17 +11,21 @@ function applyFilters(params: URLSearchParams, filters?: ActiveFilters): void {
   }
 }
 
-export async function listRecipes(limit = 20, offset = 0, filters?: ActiveFilters): Promise<SearchResult[]> {
+export async function listRecipes(limit = 20, offset = 0, filters?: ActiveFilters, minTime?: number | null, maxTime?: number | null): Promise<SearchResult[]> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   applyFilters(params, filters)
+  if (minTime != null) params.set('min_time', String(minTime))
+  if (maxTime != null) params.set('max_time', String(maxTime))
   const res = await fetch(`${BASE}/recipes?${params}`)
   if (!res.ok) throw new Error('Failed to fetch recipes')
   return res.json() as Promise<SearchResult[]>
 }
 
-export async function searchRecipes(q: string, limit = 20, offset = 0, filters?: ActiveFilters): Promise<SearchResult[]> {
+export async function searchRecipes(q: string, limit = 20, offset = 0, filters?: ActiveFilters, minTime?: number | null, maxTime?: number | null): Promise<SearchResult[]> {
   const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset) })
   applyFilters(params, filters)
+  if (minTime != null) params.set('min_time', String(minTime))
+  if (maxTime != null) params.set('max_time', String(maxTime))
   const res = await fetch(`${BASE}/search?${params}`)
   if (!res.ok) throw new Error('Search failed')
   return res.json() as Promise<SearchResult[]>
