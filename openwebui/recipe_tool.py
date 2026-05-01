@@ -12,18 +12,17 @@ from pydantic import BaseModel, Field
 class Tools:
     class Valves(BaseModel):
         api_base_url: str = Field(
-            default="http://localhost:8000/api",
+            default="http://localhost:8000",
             description=(
-                "Base URL of the recipes API server. "
-                "Docker: http://host.docker.internal:8000/api — "
-                "Local dev (no static dir): http://localhost:8000"
+                "Base URL of the recipes server, e.g. http://10.0.0.20:8000. "
+                "The /api prefix is added automatically."
             ),
         )
 
     class UserValves(BaseModel):
         api_base_url: str = Field(
             default="",
-            description="Override the recipes API URL (leave blank to use the admin default)",
+            description="Override the recipes server URL (leave blank to use the admin default)",
         )
 
     def __init__(self):
@@ -31,9 +30,8 @@ class Tools:
         self.user_valves = self.UserValves()
 
     def _api_base_url(self) -> str:
-        if self.user_valves.api_base_url.strip():
-            return self.user_valves.api_base_url.rstrip("/")
-        return self.valves.api_base_url.rstrip("/")
+        base = self.user_valves.api_base_url.strip() or self.valves.api_base_url
+        return base.rstrip("/") + "/api"
 
     def search_recipes(self, query: str) -> str:
         """
