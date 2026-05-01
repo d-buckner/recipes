@@ -1,0 +1,4 @@
+User-agent: *
+Disallow:
+
+Sitemap: https://mollybaz.com/sitemap_index.xml

@@ -1,6 +1,9 @@
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import responses as responses_lib
 from recipe_scrapers._exceptions import NoSchemaFoundInWildMode, RecipeSchemaNotFound
 
 from recipes.discovery import (
@@ -10,6 +13,9 @@ from recipes.discovery import (
     _probe_sitemap,
     discover_site,
 )
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+_SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 
 
 # ---------------------------------------------------------------------------
@@ -341,3 +347,182 @@ class TestFlatUrlSites:
             count = discover_site("https://justinesnacks.com")
 
         assert count == 2  # only the 2 post URLs; category sitemap excluded
+
+
+# ---------------------------------------------------------------------------
+# mollybaz.com — fixture-based integration tests
+# ---------------------------------------------------------------------------
+
+def _urls_from_fixture(name: str) -> list[str]:
+    """Parse a mollybaz fixture XML and return all <loc> URLs."""
+    path = _FIXTURES / "mollybaz" / name
+    root = ET.parse(path).getroot()
+    return [loc.text.strip() for loc in root.iter(f"{{{_SITEMAP_NS}}}loc")]
+
+
+def _mollybaz_leaf(fixture_name: str) -> MagicMock:
+    """Build a mock usp leaf node from a real mollybaz fixture file."""
+    urls = _urls_from_fixture(fixture_name)
+    url = f"https://mollybaz.com/{fixture_name}"
+    return _leaf(url, urls)
+
+
+# Probe results that mirror what live mollybaz.com returns:
+#   post-sitemap  → 100% recipe hits (all flat-slug posts are recipes)
+#   wf-sitemap    → 100% recipe hits (all /wf/ posts are recipes)
+#   everything else → 0% (page, more, update_posts, category, tag, secondary_category)
+_MOLLYBAZ_HIT_RATES = {
+    "post-sitemap.xml": (20, 20),
+    "wf-sitemap.xml": (5, 5),
+    "page-sitemap.xml": (14, 0),
+    "more-sitemap.xml": (13, 0),
+    "update_posts-sitemap.xml": (10, 0),
+    "category-sitemap.xml": (9, 0),
+    "post_tag-sitemap.xml": (17, 0),
+    "secondary_category-sitemap.xml": (7, 0),
+}
+
+
+def _mollybaz_probe(sitemap) -> tuple[int, int]:
+    for name, result in _MOLLYBAZ_HIT_RATES.items():
+        if sitemap.url and sitemap.url.endswith(name):
+            return result
+    return (0, 0)
+
+
+def _mollybaz_tree() -> MagicMock:
+    """Build a full mock usp tree for mollybaz.com using fixture data."""
+    leaves = [
+        _mollybaz_leaf("post-sitemap.xml"),
+        _mollybaz_leaf("page-sitemap.xml"),
+        _mollybaz_leaf("more-sitemap.xml"),
+        _mollybaz_leaf("update_posts-sitemap.xml"),
+        _mollybaz_leaf("wf-sitemap.xml"),
+        _mollybaz_leaf("category-sitemap.xml"),
+        _mollybaz_leaf("post_tag-sitemap.xml"),
+        _mollybaz_leaf("secondary_category-sitemap.xml"),
+    ]
+    return _index(None, [_index("https://mollybaz.com/sitemap_index.xml", leaves)])
+
+
+class TestMollybazDiscovery:
+    """
+    Fixture-based tests for mollybaz.com discovery.
+
+    mollybaz.com (Yoast SEO / WordPress) has:
+      - post-sitemap.xml  — 312 flat-slug recipe posts (e.g. /leaf-peepin-ragu/)
+      - wf-sitemap.xml    — 5 /wf/ recipe posts
+      - 6 non-recipe sitemaps (page, more, update_posts, category, tag, secondary_category)
+
+    Expected: post-sitemap and wf-sitemap are selected; all others excluded.
+    """
+
+    def test_sitemap_index_has_eight_leaf_sitemaps(self):
+        """The sitemap index declares exactly 8 child sitemaps."""
+        locs = _urls_from_fixture("sitemap_index.xml")
+        assert len(locs) == 8
+
+    def test_post_sitemap_fixture_contains_flat_slug_urls(self):
+        """Fixture post-sitemap URLs have no /recipe/ prefix — just flat slugs."""
+        urls = _urls_from_fixture("post-sitemap.xml")
+        assert len(urls) == 20
+        assert all(u.startswith("https://mollybaz.com/") for u in urls)
+        # No URL contains a /recipe/ segment — they are flat slugs
+        assert all("/recipe/" not in u for u in urls)
+        assert "https://mollybaz.com/leaf-peepin-ragu/" in urls
+
+    def test_wf_sitemap_fixture_contains_wf_path_urls(self):
+        """Fixture wf-sitemap URLs are all under /wf/."""
+        urls = _urls_from_fixture("wf-sitemap.xml")
+        assert len(urls) == 5
+        assert all("/wf/" in u for u in urls)
+        assert "https://mollybaz.com/wf/salami-and-iceberg-antipasto-pasta-salad/" in urls
+
+    def test_post_sitemap_selected_when_probe_high_hit_rate(self, mem_db):
+        """post-sitemap.xml wins the probe; all its 20 fixture URLs are discovered."""
+        tree = _mollybaz_tree()
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=tree), \
+             patch("recipes.discovery._probe_sitemap", side_effect=_mollybaz_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
+            count = discover_site("https://mollybaz.com")
+
+        # 20 from post-sitemap + 5 from wf-sitemap = 25 total
+        assert count == 25
+
+    def test_flat_slug_urls_included_in_discovered_set(self, mem_db):
+        """Flat-slug recipe URLs (no /recipe/ segment) must be discovered."""
+        tree = _mollybaz_tree()
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=tree), \
+             patch("recipes.discovery._probe_sitemap", side_effect=_mollybaz_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
+            discover_site("https://mollybaz.com")
+
+        from recipes import db
+        with db.get_conn() as conn:
+            urls = {row[0] for row in conn.execute("SELECT url FROM recipes").fetchall()}
+
+        assert "https://mollybaz.com/leaf-peepin-ragu/" in urls
+        assert "https://mollybaz.com/toona-melt/" in urls
+        assert "https://mollybaz.com/farro-and-crunchy-thangs-salad-with-herby-feta-dressing/" in urls
+
+    def test_wf_path_urls_included_in_discovered_set(self, mem_db):
+        """/wf/ recipe URLs must be discovered alongside post-sitemap URLs."""
+        tree = _mollybaz_tree()
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=tree), \
+             patch("recipes.discovery._probe_sitemap", side_effect=_mollybaz_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
+            discover_site("https://mollybaz.com")
+
+        from recipes import db
+        with db.get_conn() as conn:
+            urls = {row[0] for row in conn.execute("SELECT url FROM recipes").fetchall()}
+
+        assert "https://mollybaz.com/wf/salami-and-iceberg-antipasto-pasta-salad/" in urls
+        assert "https://mollybaz.com/wf/summer-chicken-parm-sandwich/" in urls
+
+    def test_non_recipe_sitemaps_excluded(self, mem_db):
+        """Category, tag, page, more, and update_posts sitemaps must be excluded."""
+        tree = _mollybaz_tree()
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=tree), \
+             patch("recipes.discovery._probe_sitemap", side_effect=_mollybaz_probe), \
+             patch("recipes.discovery._check_reachable", return_value=True):
+            discover_site("https://mollybaz.com")
+
+        from recipes import db
+        with db.get_conn() as conn:
+            urls = {row[0] for row in conn.execute("SELECT url FROM recipes").fetchall()}
+
+        # category sitemap
+        assert "https://mollybaz.com/category/chicken-licken/" not in urls
+        # tag sitemap
+        assert "https://mollybaz.com/tag/cozy/" not in urls
+        # page sitemap (homepage URL)
+        assert "https://mollybaz.com/" not in urls
+        # more sitemap
+        assert "https://mollybaz.com/more/latke-video/" not in urls
+        # update_posts sitemap
+        assert "https://mollybaz.com/update_posts/im-hosting-a-live-cooking-class-on-4-27/" not in urls
+        # secondary_category sitemap
+        assert "https://mollybaz.com/secondary_category/newest-recipe/" not in urls
+
+    def test_fallback_uses_all_sitemaps_when_probe_blocked(self, mem_db):
+        """
+        When all probes return 0 hits (e.g. bot-blocked), discovery falls back
+        to ALL leaf sitemaps. This is the current fallback behaviour — all URLs
+        enter the queue and the scraper filters non-recipes at parse time.
+        """
+        tree = _mollybaz_tree()
+        total_fixture_urls = sum(
+            len(_urls_from_fixture(f))
+            for f in [
+                "post-sitemap.xml", "page-sitemap.xml", "more-sitemap.xml",
+                "update_posts-sitemap.xml", "wf-sitemap.xml", "category-sitemap.xml",
+                "post_tag-sitemap.xml", "secondary_category-sitemap.xml",
+            ]
+        )
+        with patch("recipes.discovery.sitemap_tree_for_homepage", return_value=tree), \
+             patch("recipes.discovery._probe_sitemap", return_value=(10, 0)), \
+             patch("recipes.discovery._check_reachable", return_value=True):
+            count = discover_site("https://mollybaz.com")
+
+        assert count == total_fixture_urls

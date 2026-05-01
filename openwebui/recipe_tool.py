@@ -55,7 +55,10 @@ class Tools:
         if not results:
             return f"No recipes found for '{query}'."
 
-        lines = [f"## Recipe search results for '{query}'\n"]
+        lines = [
+            f"## Recipe search results for '{query}'\n",
+            "_Note: Do not mention recipe IDs to the user — they are internal tool references only._\n",
+        ]
         for r in results:
             title = r.get("title") or "Untitled"
             recipe_id = r["id"]
@@ -64,9 +67,9 @@ class Tools:
             fav = " ⭐" if r.get("is_favorite") else ""
             desc = r.get("description") or ""
             desc_str = f"\n  > {desc[:120]}..." if len(desc) > 120 else (f"\n  > {desc}" if desc else "")
-            lines.append(f"- **[{title}]** (ID: {recipe_id}){time_str}{yields_str}{fav}{desc_str}")
+            lines.append(f"- **{title}**{time_str}{yields_str}{fav}{desc_str} `get_recipe({recipe_id})`")
 
-        lines.append(f"\n_Use `get_recipe(recipe_id)` to see the full recipe._")
+        lines.append(f"\n_Offer to fetch the full recipe for any result using get_recipe._")
         return "\n".join(lines)
 
     def get_recipe(self, recipe_id: int) -> str:
