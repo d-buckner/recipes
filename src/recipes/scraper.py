@@ -1,5 +1,6 @@
 import io
 import logging
+import queue
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -19,6 +20,10 @@ log = logging.getLogger(__name__)
 # Prevents multiple workers from running against the same site in a single process.
 _active_sites: set[str] = set()
 _active_lock = threading.Lock()
+
+# Embed requests from process_one() are dropped here; _run_embed_worker() drains it.
+# None is the sentinel that tells the worker to stop.
+_embed_queue: queue.Queue[tuple[int, dict] | None] = queue.Queue()
 
 CLAIM_TIMEOUT = 60  # seconds before a stale processing item is reclaimed (2x fetch timeout)
 MAX_RETRIES = 3
@@ -159,6 +164,8 @@ def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
         thumbnail, hero = download_images(recipe_json["image"]) if recipe_json.get("image") else (None, None)
         db.save_recipe(recipe.id, recipe_json, thumbnail, hero)
         log.info("[%d] OK: %s", recipe.id, recipe_json["title"])
+        if settings.embed_model:
+            _embed_queue.put((recipe.id, recipe_json))
         return True
     except (NoSchemaFoundInWildMode, RecipeSchemaNotFound) as exc:
         log.warning("[%d] FAIL (no schema): %s", recipe.id, exc)
@@ -197,16 +204,16 @@ def run_worker(delay: float | None = None, site: str | None = None) -> dict[str,
     return counts
 
 
-def run_embed_backfill(reset: bool = True) -> None:
-    """Embed all complete recipes, optionally clearing existing embeddings first.
+def run_embed_backfill() -> None:
+    """Re-embed all complete recipes from scratch.
 
-    Intended to be run as a background task from the API.  Throttles requests
-    using settings.embed_delay between each call.
+    Clears existing embeddings and loops through every complete recipe as fast
+    as the embedding API allows.  Intended to be run as a background task from
+    the API (e.g. after changing the embedding model).
     """
-    if reset:
-        with db.get_conn() as conn:
-            conn.execute("DELETE FROM vec_recipes")
-        log.info("[embed backfill] cleared existing embeddings")
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM vec_recipes")
+    log.info("[embed backfill] cleared existing embeddings")
 
     ids = db.get_unembedded_ids()
     log.info("[embed backfill] %d recipe(s) to embed", len(ids))
@@ -227,50 +234,30 @@ def run_embed_backfill(reset: bool = True) -> None:
         else:
             failed += 1
             log.warning("[embed backfill] %d FAIL — no recipe_json", recipe_id)
-        time.sleep(settings.embed_delay)
     log.info("[embed backfill] done — embedded=%d failed=%d", succeeded, failed)
 
 
-def _run_embed_worker(stop_event: threading.Event, delay: float) -> dict[str, int]:
-    """Background thread: embed newly-completed recipes one at a time.
+def _run_embed_worker() -> dict[str, int]:
+    """Drain _embed_queue, embedding each recipe as it arrives from process_one().
 
-    Polls get_unembedded_ids() continuously while scraping runs, sleeping
-    *delay* seconds between each embedding request (throttle).  Once
-    *stop_event* is set the worker drains whatever remains then exits.
-
-    Failed IDs are skipped for the current session (tracked in a local set)
-    so a model outage doesn't cause an infinite retry loop.
+    Exits when it receives the None sentinel (sent by run_workers() after all
+    scrape workers finish).
     """
     counts = {"embedded": 0, "failed": 0}
-    skipped: set[int] = set()
-
     while True:
-        ids = [i for i in db.get_unembedded_ids() if i not in skipped]
-        if not ids:
-            if stop_event.is_set():
-                break
-            time.sleep(0.5)  # idle poll interval
-            continue
-        recipe_id = ids[0]
-        recipe = db.get_recipe_by_id(recipe_id)
-        if recipe and recipe.recipe_json:
-            text = embeddings.build_recipe_text(recipe.recipe_json)
-            vector = embeddings.get_embedding(text)
-            if vector:
-                db.store_embedding(recipe_id, vector)
-                counts["embedded"] += 1
-                log.info("[embed] %d OK: %s", recipe_id, recipe.recipe_json.get("title", ""))
-            else:
-                skipped.add(recipe_id)
-                counts["failed"] += 1
-                log.warning("[embed] %d FAIL — skipping for this session", recipe_id)
+        item = _embed_queue.get()
+        if item is None:  # sentinel — scraping is done
+            break
+        recipe_id, recipe_json = item
+        text = embeddings.build_recipe_text(recipe_json)
+        vector = embeddings.get_embedding(text)
+        if vector:
+            db.store_embedding(recipe_id, vector)
+            counts["embedded"] += 1
+            log.info("[embed] %d OK: %s", recipe_id, recipe_json.get("title", ""))
         else:
-            skipped.add(recipe_id)
             counts["failed"] += 1
-            log.warning("[embed] %d FAIL — no recipe_json, skipping", recipe_id)
-        # Only throttle while scraping is still active; drain fast at the end.
-        if not stop_event.is_set():
-            time.sleep(delay)
+            log.warning("[embed] %d FAIL", recipe_id)
     return counts
 
 
@@ -316,14 +303,13 @@ def run_workers(delay: float | None = None) -> dict[str, int]:
 
     totals: dict[str, int] = {"processed": 0, "succeeded": 0, "failed": 0}
 
-    embed_stop = threading.Event()
     embed_future: Future | None = None
 
     n_workers = len(sites_to_start) + (1 if settings.embed_model else 0)
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
         if settings.embed_model:
-            embed_future = executor.submit(_run_embed_worker, embed_stop, settings.embed_delay)
-            log.info("Embed worker started (delay=%.1fs)", settings.embed_delay)
+            embed_future = executor.submit(_run_embed_worker)
+            log.info("Embed worker started")
 
         scrape_futures = [executor.submit(_run_and_release, site) for site in sites_to_start]
         for future in as_completed(scrape_futures):
@@ -331,9 +317,9 @@ def run_workers(delay: float | None = None) -> dict[str, int]:
             for key in totals:
                 totals[key] += result[key]
 
-        # All scrape workers done — signal embed worker to drain and exit
+        # All scrape workers done — send sentinel to stop the embed worker
         if embed_future is not None:
-            embed_stop.set()
+            _embed_queue.put(None)
             embed_result = embed_future.result()
             log.info("Embed worker done: embedded=%d failed=%d", embed_result["embedded"], embed_result["failed"])
 

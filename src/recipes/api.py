@@ -242,7 +242,7 @@ def delete_site(hostname: str) -> dict:
 def start_embed_backfill(background_tasks: BackgroundTasks) -> dict[str, str]:
     if not settings.embed_model:
         raise HTTPException(status_code=400, detail="Embedding is not configured (RECIPES_EMBED_MODEL is not set)")
-    background_tasks.add_task(scraper.run_embed_backfill, reset=True)
+    background_tasks.add_task(scraper.run_embed_backfill)
     return {"status": "started"}
 
 
