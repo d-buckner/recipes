@@ -197,6 +197,40 @@ def run_worker(delay: float | None = None, site: str | None = None) -> dict[str,
     return counts
 
 
+def run_embed_backfill(reset: bool = True) -> None:
+    """Embed all complete recipes, optionally clearing existing embeddings first.
+
+    Intended to be run as a background task from the API.  Throttles requests
+    using settings.embed_delay between each call.
+    """
+    if reset:
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM vec_recipes")
+        log.info("[embed backfill] cleared existing embeddings")
+
+    ids = db.get_unembedded_ids()
+    log.info("[embed backfill] %d recipe(s) to embed", len(ids))
+    succeeded = 0
+    failed = 0
+    for recipe_id in ids:
+        recipe = db.get_recipe_by_id(recipe_id)
+        if recipe and recipe.recipe_json:
+            text = embeddings.build_recipe_text(recipe.recipe_json)
+            vector = embeddings.get_embedding(text)
+            if vector:
+                db.store_embedding(recipe_id, vector)
+                succeeded += 1
+                log.info("[embed backfill] %d OK: %s", recipe_id, recipe.recipe_json.get("title", ""))
+            else:
+                failed += 1
+                log.warning("[embed backfill] %d FAIL", recipe_id)
+        else:
+            failed += 1
+            log.warning("[embed backfill] %d FAIL — no recipe_json", recipe_id)
+        time.sleep(settings.embed_delay)
+    log.info("[embed backfill] done — embedded=%d failed=%d", succeeded, failed)
+
+
 def _run_embed_worker(stop_event: threading.Event, delay: float) -> dict[str, int]:
     """Background thread: embed newly-completed recipes one at a time.
 

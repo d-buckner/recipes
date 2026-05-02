@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { deleteSite, discoverSite, getSites, rescrapeAll, startScrape } from '../api'
+import { deleteSite, discoverSite, getSites, reembedAll, rescrapeAll, startScrape } from '../api'
 import { Modal } from './Modal'
 import type { ScrapeRunStats } from '../types'
 
@@ -10,6 +10,7 @@ interface SettingsModalProps {
 }
 
 type RescrapeState = 'idle' | 'confirming' | 'started'
+type ReembedState = 'idle' | 'confirming' | 'started' | 'error'
 
 type SiteAction =
   | { type: 'idle' }
@@ -21,6 +22,8 @@ type SiteAction =
 export function SettingsModal({ stats, onClose, onSiteDeleted }: SettingsModalProps) {
   const [rescrapeState, setRescrapeState] = useState<RescrapeState>('idle')
   const [queuedCount, setQueuedCount] = useState(0)
+  const [reembedState, setReembedState] = useState<ReembedState>('idle')
+  const [reembedError, setReembedError] = useState('')
   const [sites, setSites] = useState<string[] | null>(null)
   const [siteActions, setSiteActions] = useState<Map<string, SiteAction>>(new Map())
 
@@ -34,6 +37,20 @@ export function SettingsModal({ stats, onClose, onSiteDeleted }: SettingsModalPr
 
   function getSiteAction(hostname: string): SiteAction {
     return siteActions.get(hostname) ?? { type: 'idle' }
+  }
+
+  const handleReembed = async () => {
+    if (reembedState === 'idle' || reembedState === 'error') {
+      setReembedState('confirming')
+      return
+    }
+    try {
+      await reembedAll()
+      setReembedState('started')
+    } catch (err) {
+      setReembedError(err instanceof Error ? err.message : 'Unknown error')
+      setReembedState('error')
+    }
   }
 
   const handleRescrape = async () => {
@@ -183,6 +200,36 @@ export function SettingsModal({ stats, onClose, onSiteDeleted }: SettingsModalPr
                 disabled={!stats || stats.complete === 0}
               >
                 Re-scrape
+              </button>
+            )}
+          </div>
+
+          <div className="settings-action">
+            <div className="settings-action-info">
+              <p className="settings-action-label">Re-embed all recipes</p>
+              <p className="settings-action-desc">
+                Regenerates semantic search embeddings for all {stats ? `${stats.complete.toLocaleString()} ` : ''}recipes. Use this after changing the embedding model.
+              </p>
+            </div>
+            {reembedState === 'started' ? (
+              <span className="settings-action-done">✓ Running in background</span>
+            ) : reembedState === 'error' ? (
+              <div className="settings-action-confirm">
+                <span className="settings-action-error">{reembedError}</span>
+                <button className="btn ghost" onClick={() => setReembedState('idle')}>Dismiss</button>
+              </div>
+            ) : reembedState === 'confirming' ? (
+              <div className="settings-action-confirm">
+                <button className="btn primary" onClick={handleReembed}>Confirm</button>
+                <button className="btn ghost" onClick={() => setReembedState('idle')}>Cancel</button>
+              </div>
+            ) : (
+              <button
+                className="btn ghost"
+                onClick={handleReembed}
+                disabled={!stats || stats.complete === 0}
+              >
+                Re-embed
               </button>
             )}
           </div>

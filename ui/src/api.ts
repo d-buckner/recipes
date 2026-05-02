@@ -104,6 +104,14 @@ export async function rescrapeAll(): Promise<{ status: string; queued: number }>
   return res.json() as Promise<{ status: string; queued: number }>
 }
 
+export async function reembedAll(): Promise<void> {
+  const res = await fetch(`${BASE}/embed/backfill`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to start re-embed' }))
+    throw new Error(err.detail ?? 'Failed to start re-embed')
+  }
+}
+
 export async function listCollections(): Promise<Collection[]> {
   const res = await fetch(`${BASE}/collections`)
   if (!res.ok) throw new Error('Failed to fetch collections')

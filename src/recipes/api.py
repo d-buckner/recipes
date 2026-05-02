@@ -238,6 +238,14 @@ def delete_site(hostname: str) -> dict:
     return {"site": hostname, "deleted": deleted}
 
 
+@app.post("/embed/backfill")
+def start_embed_backfill(background_tasks: BackgroundTasks) -> dict[str, str]:
+    if not settings.embed_model:
+        raise HTTPException(status_code=400, detail="Embedding is not configured (RECIPES_EMBED_MODEL is not set)")
+    background_tasks.add_task(scraper.run_embed_backfill, reset=True)
+    return {"status": "started"}
+
+
 @app.post("/sites/rescrape")
 def rescrape_all(background_tasks: BackgroundTasks) -> dict:
     queued = db.reset_complete_to_discovered()
