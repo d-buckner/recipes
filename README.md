@@ -10,7 +10,7 @@ A self-hosted recipe app. Scrape your favourite recipe sites into a local databa
 - **Full-text search** — SQLite FTS5 with trigram tokenisation
 - **Semantic search** — optional embeddings via any OpenAI-compatible API (e.g. Ollama), stored in SQLite with [sqlite-vec](https://github.com/asg017/sqlite-vec)
 - **Hybrid search** — Reciprocal Rank Fusion merges FTS5 and semantic results
-- **Collections & favourites** — organise recipes into named collections
+- **Collections & favorites** — organize recipes into named collections
 - **Single container** — React UI + FastAPI backend + SQLite, no external services required
 - **Open WebUI tool** — optional integration for in-chat recipe search
 
