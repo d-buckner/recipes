@@ -1,8 +1,6 @@
 # Recipes
 
-A self-hosted recipe database with semantic search, built for use with [Open WebUI](https://github.com/open-webui/open-webui).
-
-Scrape your favourite recipe sites into a local SQLite database, then search them by keyword, meaning, or both — from a web UI or directly from an Open WebUI chat.
+A self-hosted recipe app. Scrape your favourite recipe sites into a local database, then browse and search them from a clean web UI.
 
 ---
 
@@ -13,8 +11,8 @@ Scrape your favourite recipe sites into a local SQLite database, then search the
 - **Semantic search** — optional embeddings via any OpenAI-compatible API (e.g. Ollama), stored in SQLite with [sqlite-vec](https://github.com/asg017/sqlite-vec)
 - **Hybrid search** — Reciprocal Rank Fusion merges FTS5 and semantic results
 - **Collections & favourites** — organise recipes into named collections
-- **Open WebUI tool** — drop `openwebui/recipe_tool.py` into your Open WebUI instance for in-chat recipe search
 - **Single container** — React UI + FastAPI backend + SQLite, no external services required
+- **Open WebUI tool** — optional integration for in-chat recipe search
 
 ---
 
@@ -179,11 +177,9 @@ flowchart LR
 
 ---
 
-## Open WebUI integration
+## Open WebUI (optional)
 
-Copy `openwebui/recipe_tool.py` into your Open WebUI instance as a **Tool**.
-
-Set the `base_url` valve to your recipes server (e.g. `http://recipes:8000`) and optionally set `default_search_mode` to `keyword`, `semantic`, or `hybrid`.
+If you use [Open WebUI](https://github.com/open-webui/open-webui), copy `openwebui/recipe_tool.py` into your instance as a **Tool**. Set the `base_url` valve to your recipes server (e.g. `http://recipes:8000`) and optionally set `default_search_mode` to `keyword`, `semantic`, or `hybrid`.
 
 ---
 
