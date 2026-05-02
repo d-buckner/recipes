@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     db_path: str = "recipes.db"
     rate_limit_delay: float = 2.0
     max_workers: int = 1
-    user_agent: str = "RecipeBot/1.0 (+https://github.com/local/recipes)"
+    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
     url_filter_pattern: str = r"/recipe"
 
     embed_url: str = Field(
