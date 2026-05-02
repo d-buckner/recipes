@@ -1276,7 +1276,7 @@ a.recipe-card {
 
 .collection-tile-new {
   border: 2px dashed var(--border);
-  background: transparent;
+  background: var(--card-bg);
   box-shadow: none;
   cursor: default;
   gap: 8px;
