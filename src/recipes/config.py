@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         default=1.0,
         description="Seconds between embedding requests (throttle). Set RECIPES_EMBED_DELAY to override.",
     )
+    embed_timeout: float = Field(
+        default=30.0,
+        description="Seconds before an embedding API request times out. Set RECIPES_EMBED_TIMEOUT to override.",
+    )
 
     @property
     def site_list(self) -> list[str]:

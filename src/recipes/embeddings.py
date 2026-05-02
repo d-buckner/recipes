@@ -42,19 +42,25 @@ def get_embedding(text: str) -> list[float] | None:
         resp = requests.post(
             f"{settings.embed_url.rstrip('/')}/v1/embeddings",
             json={"model": settings.embed_model, "input": text},
-            timeout=30,
+            timeout=settings.embed_timeout,
         )
         resp.raise_for_status()
         data = resp.json()
         items = data.get("data")
         if not isinstance(items, list) or not items:
-            log.warning("Embedding API returned unexpected response: %s", data)
+            log.warning("Embedding API unexpected response: %s", data)
             return None
         vector = items[0].get("embedding")
         if not isinstance(vector, list) or not vector:
-            log.warning("Embedding API returned unexpected embedding: %s", items[0])
+            log.warning("Embedding API unexpected embedding shape: %s", items[0])
             return None
         return [float(v) for v in vector]
+    except requests.Timeout:
+        log.warning("Embedding API timed out after %ss (model=%s)", settings.embed_timeout, settings.embed_model)
+        return None
+    except requests.RequestException as exc:
+        log.warning("Embedding API request failed: %s", exc)
+        return None
     except Exception as exc:
-        log.debug("Embedding failed: %s", exc)
+        log.warning("Embedding failed unexpectedly: %s", exc)
         return None

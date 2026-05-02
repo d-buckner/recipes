@@ -62,6 +62,7 @@ def test_get_embedding_returns_vector():
     with patch("recipes.embeddings.settings") as mock_settings:
         mock_settings.embed_model = "nomic-embed-text"
         mock_settings.embed_url = "http://localhost:11434"
+        mock_settings.embed_timeout = 30.0
         responses_mock.add(
             responses_mock.POST,
             "http://localhost:11434/v1/embeddings",
@@ -78,6 +79,7 @@ def test_get_embedding_returns_none_on_network_error():
     with patch("recipes.embeddings.settings") as mock_settings:
         mock_settings.embed_model = "nomic-embed-text"
         mock_settings.embed_url = "http://localhost:11434"
+        mock_settings.embed_timeout = 30.0
         responses_mock.add(
             responses_mock.POST,
             "http://localhost:11434/v1/embeddings",
@@ -89,10 +91,28 @@ def test_get_embedding_returns_none_on_network_error():
 
 
 @responses_mock.activate
+def test_get_embedding_returns_none_on_timeout():
+    import requests as req
+    with patch("recipes.embeddings.settings") as mock_settings:
+        mock_settings.embed_model = "nomic-embed-text"
+        mock_settings.embed_url = "http://localhost:11434"
+        mock_settings.embed_timeout = 5.0
+        responses_mock.add(
+            responses_mock.POST,
+            "http://localhost:11434/v1/embeddings",
+            body=req.Timeout("timed out"),
+        )
+        result = get_embedding("chicken soup")
+
+    assert result is None
+
+
+@responses_mock.activate
 def test_get_embedding_returns_none_on_bad_response():
     with patch("recipes.embeddings.settings") as mock_settings:
         mock_settings.embed_model = "nomic-embed-text"
         mock_settings.embed_url = "http://localhost:11434"
+        mock_settings.embed_timeout = 30.0
         responses_mock.add(
             responses_mock.POST,
             "http://localhost:11434/v1/embeddings",

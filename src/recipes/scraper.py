@@ -225,14 +225,15 @@ def _run_embed_worker(stop_event: threading.Event, delay: float) -> dict[str, in
             if vector:
                 db.store_embedding(recipe_id, vector)
                 counts["embedded"] += 1
-                log.debug("[embed] %d OK", recipe_id)
+                log.info("[embed] %d OK: %s", recipe_id, recipe.recipe_json.get("title", ""))
             else:
                 skipped.add(recipe_id)
                 counts["failed"] += 1
-                log.debug("[embed] %d FAIL (no vector) — skipping for this session", recipe_id)
+                log.warning("[embed] %d FAIL — skipping for this session", recipe_id)
         else:
             skipped.add(recipe_id)
             counts["failed"] += 1
+            log.warning("[embed] %d FAIL — no recipe_json, skipping", recipe_id)
         # Only throttle while scraping is still active; drain fast at the end.
         if not stop_event.is_set():
             time.sleep(delay)
