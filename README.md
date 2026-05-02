@@ -1,6 +1,6 @@
 # Recipes
 
-A self-hosted recipe app. Scrape your favourite recipe sites into a local database, then browse and search them from a clean web UI.
+A self-hosted recipe app. Scrape your favorite recipe sites, then browse and search them from a clean web UI.
 
 ---
 
