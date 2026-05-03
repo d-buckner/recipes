@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from recipes import db
 from recipes.api import app
+from recipes.config import settings
 
 client = TestClient(app)
 
@@ -28,13 +29,36 @@ def _seed_recipe(title: str = "Chicken Soup", url: str = "https://example.com/re
     return recipe.id
 
 
-def test_search_returns_results():
+def test_search_returns_results(monkeypatch):
+    monkeypatch.setattr(settings, "embed_model", "")
     _seed_recipe()
     resp = client.get("/search", params={"q": "chicken"})
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) >= 1
     assert data[0]["title"] == "Chicken Soup"
+    assert resp.headers["X-Recipes-Search-Mode-Requested"] == "hybrid"
+    assert resp.headers["X-Recipes-Search-Mode-Used"] == "keyword"
+    assert resp.headers["X-Recipes-Search-Degraded"] == "true"
+    assert resp.headers["X-Recipes-Search-Degraded-Reason"] == "embedding_model_not_configured"
+
+
+def test_keyword_search_reports_mode_without_degradation():
+    _seed_recipe()
+    resp = client.get("/search", params={"q": "chicken", "mode": "keyword"})
+    assert resp.status_code == 200
+    assert resp.headers["X-Recipes-Search-Mode-Requested"] == "keyword"
+    assert resp.headers["X-Recipes-Search-Mode-Used"] == "keyword"
+    assert resp.headers["X-Recipes-Search-Degraded"] == "false"
+
+
+def test_search_capabilities(monkeypatch):
+    monkeypatch.setattr(settings, "embed_model", "")
+    resp = client.get("/search/capabilities")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["default_mode"] == "hybrid"
+    assert data["semantic_enabled"] is False
 
 
 def test_search_no_results():
@@ -89,3 +113,25 @@ def test_stats():
     data = resp.json()
     assert data["total"] >= 1
     assert data["complete"] >= 1
+
+
+def test_start_scrape_returns_trackable_job():
+    resp = client.post("/sites/scrape")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "started"
+    assert isinstance(data["job_id"], int)
+
+    job_resp = client.get(f"/jobs/{data['job_id']}")
+    assert job_resp.status_code == 200
+    job = job_resp.json()
+    assert job["kind"] == "scrape"
+    assert job["status"] == "succeeded"
+    assert job["processed"] == 0
+
+
+def test_list_jobs():
+    db.create_job("scrape")
+    resp = client.get("/jobs")
+    assert resp.status_code == 200
+    assert resp.json()[0]["kind"] == "scrape"

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useUrlFilters } from '../hooks/useUrlFilters'
 import {
   addFavorite,
@@ -22,6 +23,7 @@ import { Modal } from '../components/Modal'
 import { RecipeGrid } from '../components/RecipeGrid'
 import { SearchBar } from '../components/SearchBar'
 import { SettingsModal } from '../components/SettingsModal'
+import { GroceryListPage } from './GroceryListPage'
 import type { Collection, SearchResult, ScrapeRunStats, TagFilter, TagFilterType } from '../types'
 
 type ToastState =
@@ -29,7 +31,7 @@ type ToastState =
   | { status: 'done'; site: string; discovered: number }
   | { status: 'error'; site: string; message: string }
 
-type Tab = 'explore' | 'favorites' | 'collections'
+type Tab = 'explore' | 'favorites' | 'collections' | 'list'
 
 const LIMIT = 20
 
@@ -42,8 +44,9 @@ const FILTER_EMOJI: Record<TagFilterType, string> = {
 }
 
 export function HomePage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = useState<Tab>('explore')
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
   const [recipes, setRecipes] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -65,6 +68,16 @@ export function HomePage() {
   const [creatingCollection, setCreatingCollection] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Keep ?q= in sync with the query input so searches are shareable
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (query) next.set('q', query)
+      else next.delete('q')
+      return next
+    }, { replace: true })
+  }, [query])
 
   const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
@@ -253,7 +266,7 @@ export function HomePage() {
         ? { icon: '🔎', title: `No results for "${query}"`, body: 'Try different keywords or check your spelling.' }
         : { icon: '🍳', title: 'No recipes yet', body: 'Add a site to start discovering recipes.' }
 
-  const showRecipeGrid = tab !== 'collections' || selectedCollection !== null
+  const showRecipeGrid = tab !== 'collections' && tab !== 'list' || (tab === 'collections' && selectedCollection !== null)
 
   return (
     <>
@@ -311,7 +324,12 @@ export function HomePage() {
           >
             📁 Collections{collections.length > 0 ? ` (${collections.length})` : ''}
           </button>
-
+          <button
+            className={tab === 'list' ? 'active' : ''}
+            onClick={() => handleTabChange('list')}
+          >
+            🛒 List
+          </button>
         </div>
       </nav>
 
@@ -423,6 +441,8 @@ export function HomePage() {
           <span className="collection-drill-title">📁 {selectedCollection.name}</span>
         </div>
       )}
+
+      {tab === 'list' && <GroceryListPage />}
 
       {showRecipeGrid && (
         <RecipeGrid

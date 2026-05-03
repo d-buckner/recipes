@@ -5,11 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openwebui.recipe_tool import (
-    Tools,
-    _format_fraction,
-    _parse_qty_token,
-    _scale_ingredient,
+from openwebui.recipe_tool import Tools
+from recipes.ingredients import (
+    format_fraction as _format_fraction,
+    parse_qty_token as _parse_qty_token,
+    scale_ingredient as _scale_ingredient,
 )
 
 
@@ -216,6 +216,22 @@ _SAMPLE_RECIPE_JSON = {
     ],
 }
 
+_RECIPE_RESPONSE = {
+    "recipe_json": _SAMPLE_RECIPE_JSON,
+    "url": "https://example.com/salad",
+    "status": "complete",
+}
+
+_SEARCH_HIT = {"id": 42, "title": "Kale White Bean Salad"}
+
+
+def _mock_search_then_recipe(mock_get, recipe_response: dict) -> None:
+    """Set up mock for the two sequential GET calls: search lookup → recipe detail."""
+    mock_get.side_effect = [
+        _make_mock_response(200, [_SEARCH_HIT]),
+        _make_mock_response(200, recipe_response),
+    ]
+
 
 class TestScaleRecipeTool:
     def setup_method(self):
@@ -223,11 +239,8 @@ class TestScaleRecipeTool:
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_happy_path_4x(self, mock_get):
-        mock_get.return_value = _make_mock_response(
-            200,
-            {"recipe_json": _SAMPLE_RECIPE_JSON, "url": "https://example.com/salad", "status": "complete"},
-        )
-        result = self.tools.scale_recipe(1, 4)
+        _mock_search_then_recipe(mock_get, _RECIPE_RESPONSE)
+        result = self.tools.scale_recipe("Kale White Bean Salad", 4)
 
         assert "Kale White Bean Salad × 4" in result
         assert "6 cups pearl couscous" in result
@@ -237,50 +250,43 @@ class TestScaleRecipeTool:
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_yields_line_included(self, mock_get):
-        mock_get.return_value = _make_mock_response(
-            200,
-            {"recipe_json": _SAMPLE_RECIPE_JSON, "url": "https://example.com/salad", "status": "complete"},
-        )
-        result = self.tools.scale_recipe(1, 2)
+        _mock_search_then_recipe(mock_get, _RECIPE_RESPONSE)
+        result = self.tools.scale_recipe("Kale White Bean Salad", 2)
         assert "4 servings" in result
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_recipe_not_found(self, mock_get):
-        mock_get.return_value = _make_mock_response(404)
-        result = self.tools.scale_recipe(999, 4)
-        assert "not found" in result.lower()
+        # Search returns empty results
+        mock_get.return_value = _make_mock_response(200, [])
+        result = self.tools.scale_recipe("Nonexistent Recipe", 4)
+        assert "no recipe found" in result.lower()
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_recipe_not_scraped(self, mock_get):
-        mock_get.return_value = _make_mock_response(
-            200, {"recipe_json": None, "status": "discovered"}
-        )
-        result = self.tools.scale_recipe(1, 4)
+        _mock_search_then_recipe(mock_get, {"recipe_json": None, "status": "discovered"})
+        result = self.tools.scale_recipe("Kale White Bean Salad", 4)
         assert "not been scraped" in result.lower()
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_connection_error(self, mock_get):
         import requests as req_lib
         mock_get.side_effect = req_lib.exceptions.ConnectionError()
-        result = self.tools.scale_recipe(1, 4)
+        result = self.tools.scale_recipe("Kale White Bean Salad", 4)
         assert "could not connect" in result.lower()
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_scale_factor_half(self, mock_get):
-        mock_get.return_value = _make_mock_response(
-            200,
-            {"recipe_json": _SAMPLE_RECIPE_JSON, "url": "https://example.com/salad", "status": "complete"},
-        )
-        result = self.tools.scale_recipe(1, 0.5)
+        _mock_search_then_recipe(mock_get, _RECIPE_RESPONSE)
+        result = self.tools.scale_recipe("Kale White Bean Salad", 0.5)
         assert "× 1/2" in result
         assert "¾ cups pearl couscous" in result
 
     @patch("openwebui.recipe_tool.requests.get")
     def test_does_not_expose_recipe_id(self, mock_get):
-        mock_get.return_value = _make_mock_response(
-            200,
-            {"recipe_json": _SAMPLE_RECIPE_JSON, "url": "https://example.com/salad", "status": "complete"},
-        )
-        result = self.tools.scale_recipe(523, 4)
-        # The numeric ID must not appear in the output shown to the user
+        # Recipe has a specific internal ID; it must not appear in user-facing output
+        mock_get.side_effect = [
+            _make_mock_response(200, [{"id": 523, "title": "Kale White Bean Salad"}]),
+            _make_mock_response(200, _RECIPE_RESPONSE),
+        ]
+        result = self.tools.scale_recipe("Kale White Bean Salad", 4)
         assert "523" not in result

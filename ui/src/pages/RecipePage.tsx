@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { addFavorite, getRecipe, listCollections, removeFavorite, removeRecipeFromCollection } from '../api'
+import { addFavorite, addRecipeToGroceryList, getRecipe, listCollections, removeFavorite, removeRecipeFromCollection } from '../api'
 import { CollectionPicker } from '../components/CollectionPicker'
 import type { Collection, RecipeDetail } from '../types'
+import { parseServings, scaleIngredient } from '../utils/scaleIngredient'
 
 interface RecipePageParams extends Record<string, string | undefined> {
   id: string
@@ -24,6 +25,10 @@ export function RecipePage() {
   const [collections, setCollections] = useState<string[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [allCollections, setAllCollections] = useState<Collection[]>([])
+  const [servings, setServings] = useState<number>(1)
+  const [originalServings, setOriginalServings] = useState<number>(1)
+  const [addingToList, setAddingToList] = useState(false)
+  const [addedCount, setAddedCount] = useState<number | null>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -32,6 +37,9 @@ export function RecipePage() {
       .then((r) => {
         setRecipe(r)
         setCollections(r.collections)
+        const parsed = parseServings(r.recipe_json?.yields ?? null)
+        setServings(parsed)
+        setOriginalServings(parsed)
       })
       .catch(() => navigate('/'))
       .finally(() => setLoading(false))
@@ -66,6 +74,20 @@ export function RecipePage() {
       await addFavorite(recipe.id)
     }
     setFav((f) => !f)
+  }
+
+  const handleAddToGroceryList = async () => {
+    if (!recipe) return
+    setAddingToList(true)
+    setAddedCount(null)
+    try {
+      const scaleFactor = originalServings > 0 ? servings / originalServings : 1
+      const items = await addRecipeToGroceryList(recipe.id, scaleFactor)
+      setAddedCount(items.length)
+      setTimeout(() => setAddedCount(null), 4000)
+    } finally {
+      setAddingToList(false)
+    }
   }
 
   const rj = recipe?.recipe_json
@@ -189,13 +211,48 @@ export function RecipePage() {
           <p className="recipe-page-desc">{rj.description}</p>
         )}
 
+        {rj.ingredients && rj.ingredients.length > 0 && (
+          <div className="servings-scaler">
+            <span className="servings-label">Servings</span>
+            <button
+              className="servings-btn"
+              onClick={() => setServings((s) => Math.max(1, s - 1))}
+              aria-label="Decrease servings"
+              disabled={servings <= 1}
+            >−</button>
+            <span className="servings-count">{servings}</span>
+            <button
+              className="servings-btn"
+              onClick={() => setServings((s) => s + 1)}
+              aria-label="Increase servings"
+            >+</button>
+            <button
+              className="btn ghost"
+              style={{ marginLeft: '12px', border: '1.5px solid var(--border)' }}
+              onClick={handleAddToGroceryList}
+              disabled={addingToList}
+            >
+              {addingToList ? 'Adding...' : '🛒 Add to grocery list'}
+            </button>
+            {addedCount !== null && (
+              <span className="servings-added-confirm">
+                Added {addedCount} ingredient{addedCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="recipe-columns">
           {rj.ingredients && rj.ingredients.length > 0 && (
             <div className="recipe-section">
               <h3>Ingredients</h3>
               <ul className="ingredients-list">
                 {rj.ingredients.map((ing, i) => (
-                  <li key={i}>{ing}</li>
+                  <li key={i}>
+                    {originalServings > 0 && servings !== originalServings
+                      ? scaleIngredient(ing, servings / originalServings)
+                      : ing}
+                  </li>
                 ))}
               </ul>
             </div>

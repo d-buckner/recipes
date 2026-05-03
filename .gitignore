@@ -11,3 +11,6 @@ ui/dist/
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Playwright MCP artifacts
+.playwright-mcp/

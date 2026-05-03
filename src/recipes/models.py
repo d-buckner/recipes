@@ -69,6 +69,22 @@ class SearchResult:
 
 
 @dataclass
+class GroceryListItem:
+    id: int
+    qty_num: int | None      # Fraction numerator; None = no quantity
+    qty_den: int             # Fraction denominator (always ≥ 1)
+    unit: str | None         # normalized unit, e.g. "tbsp", "cup"; None if absent
+    ingredient: str          # normalized ingredient name (notes stripped, lowercased)
+    original_raw: list[str]  # original unmodified strings before merging
+    recipe_ids: list[int]    # IDs of source recipes
+    checked: bool
+    approximate: bool        # True if quantity was estimated by LLM
+    sort_order: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class ScrapeRunStats:
     total: int
     discovered: int

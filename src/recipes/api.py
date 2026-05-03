@@ -10,7 +10,8 @@ from pydantic import BaseModel
 
 from . import db, discovery, embeddings, scraper
 from .config import settings
-from .models import Collection, SearchResult, ScrapeRunStats
+from .ingredients import format_fraction
+from .models import Collection, GroceryListItem, SearchResult, ScrapeRunStats
 from .search import sanitize_fts_query
 
 
@@ -363,6 +364,134 @@ def add_recipe_to_collection(collection_id: int, recipe_id: int) -> None:
 @app.delete("/collections/{collection_id}/recipes/{recipe_id}", status_code=204)
 def remove_recipe_from_collection(collection_id: int, recipe_id: int) -> None:
     db.remove_recipe_from_collection(collection_id, recipe_id)
+
+
+class GroceryListItemResponse(BaseModel):
+    id: int
+    qty_num: int | None
+    qty_den: int
+    qty_display: str | None
+    unit: str | None
+    ingredient: str
+    original_raw: list[str]
+    recipe_ids: list[int]
+    recipe_titles: dict[int, str]
+    checked: bool
+    approximate: bool
+    sort_order: int
+    created_at: str
+    updated_at: str
+
+
+class AddGroceryItemRequest(BaseModel):
+    raw: str
+
+
+class UpdateGroceryItemRequest(BaseModel):
+    checked: bool | None = None
+    ingredient: str | None = None
+    qty_num: int | None = None
+    qty_den: int | None = None
+    unit: str | None = None
+
+
+def _grocery_item_to_response(
+    item: GroceryListItem,
+    titles: dict[int, str] | None = None,
+) -> GroceryListItemResponse:
+    from fractions import Fraction
+    qty_display: str | None = None
+    if item.qty_num is not None:
+        qty_display = format_fraction(Fraction(item.qty_num, item.qty_den))
+    item_titles = {rid: titles[rid] for rid in item.recipe_ids if titles and rid in titles}
+    return GroceryListItemResponse(
+        id=item.id,
+        qty_num=item.qty_num,
+        qty_den=item.qty_den,
+        qty_display=qty_display,
+        unit=item.unit,
+        ingredient=item.ingredient,
+        original_raw=item.original_raw,
+        recipe_ids=item.recipe_ids,
+        recipe_titles=item_titles,
+        checked=item.checked,
+        approximate=item.approximate,
+        sort_order=item.sort_order,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@app.get("/grocery-list", response_model=list[GroceryListItemResponse])
+def get_grocery_list() -> list[GroceryListItemResponse]:
+    items = db.list_grocery_items()
+    all_ids = list({rid for item in items for rid in item.recipe_ids})
+    titles = db.get_recipe_titles(all_ids)
+    return [_grocery_item_to_response(i, titles) for i in items]
+
+
+def _titles_for_item(item: GroceryListItem) -> dict[int, str]:
+    return db.get_recipe_titles(item.recipe_ids)
+
+
+@app.post("/grocery-list/items", response_model=GroceryListItemResponse, status_code=201)
+def add_grocery_item(req: AddGroceryItemRequest) -> GroceryListItemResponse:
+    item = db.add_grocery_item_raw(req.raw)
+    return _grocery_item_to_response(item, _titles_for_item(item))
+
+
+@app.post(
+    "/grocery-list/from-recipe/{recipe_id}",
+    response_model=list[GroceryListItemResponse],
+    status_code=201,
+)
+def add_grocery_items_from_recipe(
+    recipe_id: int,
+    scale_factor: float = Query(default=1.0, gt=0),
+) -> list[GroceryListItemResponse]:
+    recipe = db.get_recipe_by_id(recipe_id)
+    if recipe is None:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    items = db.add_grocery_items_from_recipe(recipe_id, scale_factor=scale_factor)
+    all_ids = list({rid for item in items for rid in item.recipe_ids})
+    titles = db.get_recipe_titles(all_ids)
+    return [_grocery_item_to_response(i, titles) for i in items]
+
+
+@app.patch("/grocery-list/items/{item_id}", response_model=GroceryListItemResponse)
+def update_grocery_item(item_id: int, req: UpdateGroceryItemRequest) -> GroceryListItemResponse:
+    item = db.update_grocery_item(
+        item_id,
+        checked=req.checked,
+        ingredient=req.ingredient,
+        qty_num=req.qty_num,
+        qty_den=req.qty_den,
+        unit=req.unit,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _grocery_item_to_response(item, _titles_for_item(item))
+
+
+@app.delete("/grocery-list/items/{item_id}", status_code=204)
+def delete_grocery_item(item_id: int) -> None:
+    item = db.update_grocery_item(item_id)  # existence check
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.delete_grocery_item(item_id)
+
+
+@app.delete("/grocery-list", status_code=204)
+def clear_grocery_list(checked_only: bool = Query(default=False)) -> None:
+    db.clear_grocery_list(checked_only=checked_only)
+
+
+@app.post("/grocery-list/items/{item_id}/merge/{other_id}", response_model=GroceryListItemResponse)
+def merge_grocery_items(item_id: int, other_id: int) -> GroceryListItemResponse:
+    item = db.merge_grocery_items(item_id, other_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="One or both items not found")
+    return _grocery_item_to_response(item, _titles_for_item(item))
 
 
 def create_app() -> FastAPI:

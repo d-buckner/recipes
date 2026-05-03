@@ -56,6 +56,75 @@ def test_save_recipe(mem_db):
     saved = db.get_recipe_by_id(recipe.id)
     assert saved.status.value == "complete"
     assert saved.recipe_json["title"] == "Chicken Soup"
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT title, author, total_time, cuisine_json, category_json FROM recipes WHERE id = ?",
+            (recipe.id,),
+        ).fetchone()
+    assert row["title"] == "Chicken Soup"
+    assert row["total_time"] == 45
+
+
+def test_list_recipes_uses_canonical_filters(mem_db):
+    db.insert_discovered_urls([
+        ("https://example.com/recipes/soup", "example.com"),
+        ("https://example.com/recipes/tacos", "example.com"),
+    ])
+    soup = db.claim_next_url()
+    db.save_recipe(soup.id, {
+        "title": "Chicken Soup",
+        "description": "",
+        "ingredients": ["chicken"],
+        "keywords": [],
+        "author": "Alice",
+        "total_time": 45,
+        "cuisine": ["American"],
+        "category": ["Soup"],
+    })
+    tacos = db.claim_next_url()
+    db.save_recipe(tacos.id, {
+        "title": "Fish Tacos",
+        "description": "",
+        "ingredients": ["fish"],
+        "keywords": [],
+        "author": "Bob",
+        "total_time": 20,
+        "cuisine": ["Mexican"],
+        "category": ["Dinner"],
+    })
+
+    results = db.list_recipes(author=["Alice"], cuisine=["American"], max_time=60)
+    assert [r.title for r in results] == ["Chicken Soup"]
+
+
+def test_init_db_backfills_canonical_columns(mem_db):
+    db.insert_discovered_urls([("https://example.com/recipes/soup", "example.com")])
+    recipe = db.claim_next_url()
+    db.save_recipe(recipe.id, {
+        "title": "Chicken Soup",
+        "description": "",
+        "ingredients": ["chicken"],
+        "keywords": [],
+        "author": "Alice",
+        "total_time": 45,
+        "cuisine": ["American"],
+        "category": ["Soup"],
+    })
+    with db.get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE recipes
+            SET title = NULL, author = NULL, total_time = NULL,
+                cuisine_json = NULL, category_json = NULL
+            WHERE id = ?
+            """,
+            (recipe.id,),
+        )
+
+    db.init_db()
+
+    results = db.list_recipes(author=["Alice"], cuisine=["American"], max_time=60)
+    assert [r.title for r in results] == ["Chicken Soup"]
 
 
 def test_mark_unavailable(mem_db):
@@ -145,3 +214,24 @@ def test_get_stats_counts_unavailable(mem_db):
     stats = db.get_stats()
     assert stats.unavailable == 1
     assert stats.failed == 0
+
+
+def test_job_lifecycle(mem_db):
+    job_id = db.create_job("scrape", total=2, message="Queued")
+    job = db.get_job(job_id)
+    assert job is not None
+    assert job.status == "queued"
+    assert job.total == 2
+
+    db.start_job(job_id, message="Running")
+    db.update_job_progress(job_id, processed_delta=1, succeeded_delta=1)
+    db.finish_job(job_id, "succeeded", "Done")
+
+    job = db.get_job(job_id)
+    assert job.status == "succeeded"
+    assert job.processed == 1
+    assert job.succeeded == 1
+    assert job.failed == 0
+    assert job.message == "Done"
+    assert job.started_at is not None
+    assert job.finished_at is not None

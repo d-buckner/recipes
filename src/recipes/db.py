@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Generator
 
-from .models import Collection, JobRun, RecipeRow, RecipeStatus, SearchResult, ScrapeRunStats
+from .models import Collection, GroceryListItem, JobRun, RecipeRow, RecipeStatus, SearchResult, ScrapeRunStats
 from .query import RecipeFilters, SEARCH_RESULT_COLUMNS, in_placeholders
 
 log = logging.getLogger(__name__)
@@ -147,9 +147,22 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recipes_status_updated ON recipes(status, updated_at);
-CREATE INDEX IF NOT EXISTS idx_recipes_author ON recipes(author);
-CREATE INDEX IF NOT EXISTS idx_recipes_total_time ON recipes(total_time);
 CREATE INDEX IF NOT EXISTS idx_recipes_site ON recipes(site);
+
+CREATE TABLE IF NOT EXISTS grocery_list_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    qty_num      INTEGER,
+    qty_den      INTEGER NOT NULL DEFAULT 1,
+    unit         TEXT,
+    ingredient   TEXT    NOT NULL,
+    original_raw TEXT    NOT NULL DEFAULT '[]',
+    recipe_ids   TEXT    NOT NULL DEFAULT '[]',
+    checked      INTEGER NOT NULL DEFAULT 0,
+    approximate  INTEGER NOT NULL DEFAULT 0,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -164,6 +177,8 @@ _MIGRATIONS = [
     "ALTER TABLE recipes ADD COLUMN site_name TEXT",
     "ALTER TABLE recipes ADD COLUMN cuisine_json TEXT",
     "ALTER TABLE recipes ADD COLUMN category_json TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_recipes_total_time ON recipes(total_time)",
+    "CREATE INDEX IF NOT EXISTS idx_recipes_author ON recipes(author)",
 ]
 
 
@@ -691,6 +706,23 @@ def get_recipe_by_id(recipe_id: int) -> RecipeRow | None:
         return _row_to_recipe(row)
 
 
+def get_recipe_titles(ids: list[int]) -> dict[int, str]:
+    """Return a mapping of recipe id → title for the given ids."""
+    if not ids:
+        return {}
+    with get_conn() as conn:
+        placeholders = ','.join('?' * len(ids))
+        rows = conn.execute(
+            f"SELECT id, recipe_json FROM recipes WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+    result: dict[int, str] = {}
+    for row in rows:
+        rj = json.loads(row['recipe_json']) if row['recipe_json'] else {}
+        result[row['id']] = rj.get('title') or f'Recipe {row["id"]}'
+    return result
+
+
 def add_favorite(recipe_id: int) -> None:
     with get_conn() as conn:
         conn.execute("INSERT OR IGNORE INTO favorites (recipe_id) VALUES (?)", (recipe_id,))
@@ -1016,6 +1048,237 @@ def list_collection_recipes(collection_id: int, limit: int = 20, offset: int = 0
             (collection_id, limit, offset),
         ).fetchall()
         return [_row_to_search_result(r) for r in rows]
+
+
+def list_grocery_items() -> list[GroceryListItem]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM grocery_list_items ORDER BY sort_order ASC, id ASC"
+        ).fetchall()
+        return [_row_to_grocery_item(row) for row in rows]
+
+
+def add_grocery_item_raw(raw: str, recipe_id: int | None = None) -> GroceryListItem:
+    """Parse *raw*, merge into an existing matching item, or insert a new one.
+
+    Two items match when they share the same normalized unit and ingredient name
+    AND both have a quantity (qty_num is not None).  No-quantity items are always
+    inserted as new rows because there is nothing to sum.
+    """
+    from fractions import Fraction as _Fraction
+    from .ingredients import normalize_name, parse_ingredient, scale_ingredient
+
+    parsed = parse_ingredient(raw)
+    norm_name = normalize_name(parsed.name) if parsed.name else raw.strip().lower()
+
+    with get_conn() as conn:
+        # Try to find a matching existing item to merge into
+        existing = None
+        if parsed.qty is not None:
+            existing = conn.execute(
+                """
+                SELECT * FROM grocery_list_items
+                WHERE ingredient = ?
+                  AND (unit IS ? OR (unit IS NULL AND ? IS NULL))
+                  AND qty_num IS NOT NULL
+                LIMIT 1
+                """,
+                (norm_name, parsed.unit, parsed.unit),
+            ).fetchone()
+
+        if existing is not None:
+            old_qty = _Fraction(existing["qty_num"], existing["qty_den"])
+            new_qty = old_qty + parsed.qty  # type: ignore[operator]
+            old_raw = json.loads(existing["original_raw"])
+            old_ids = json.loads(existing["recipe_ids"])
+            new_raw = json.dumps(old_raw + [raw])
+            new_ids = json.dumps(
+                old_ids + ([recipe_id] if recipe_id is not None and recipe_id not in old_ids else [])
+            )
+            row = conn.execute(
+                """
+                UPDATE grocery_list_items
+                SET qty_num = ?, qty_den = ?,
+                    original_raw = ?,
+                    recipe_ids = ?,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                RETURNING *
+                """,
+                (new_qty.numerator, new_qty.denominator, new_raw, new_ids, existing["id"]),
+            ).fetchone()
+        else:
+            qty_num = parsed.qty.numerator if parsed.qty is not None else None
+            qty_den = parsed.qty.denominator if parsed.qty is not None else 1
+            recipe_ids_json = json.dumps([recipe_id] if recipe_id is not None else [])
+            row = conn.execute(
+                """
+                INSERT INTO grocery_list_items
+                    (qty_num, qty_den, unit, ingredient, original_raw, recipe_ids)
+                VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                (qty_num, qty_den, parsed.unit, norm_name, json.dumps([raw]), recipe_ids_json),
+            ).fetchone()
+
+    return _row_to_grocery_item(row)
+
+
+def add_grocery_items_from_recipe(recipe_id: int, scale_factor: float = 1.0) -> list[GroceryListItem]:
+    """Add all ingredients from *recipe_id* to the grocery list, scaled by *scale_factor*.
+
+    Returns the list of affected GroceryListItem objects (merged or newly created).
+    Returns [] if the recipe does not exist or has no ingredients.
+    """
+    from fractions import Fraction as _Fraction
+    from .ingredients import scale_ingredient
+
+    recipe = get_recipe_by_id(recipe_id)
+    if recipe is None or not recipe.recipe_json:
+        return []
+    ingredients: list[str] = recipe.recipe_json.get("ingredients") or []
+    if not ingredients:
+        return []
+
+    factor = _Fraction(scale_factor).limit_denominator(1000)
+    results: list[GroceryListItem] = []
+    for raw in ingredients:
+        scaled = scale_ingredient(raw, factor) if factor != 1 else raw
+        results.append(add_grocery_item_raw(scaled, recipe_id=recipe_id))
+    return results
+
+
+def update_grocery_item(
+    item_id: int,
+    *,
+    checked: bool | None = None,
+    ingredient: str | None = None,
+    qty_num: int | None = None,
+    qty_den: int | None = None,
+    unit: str | None = None,
+) -> GroceryListItem | None:
+    """Update fields on a grocery list item.  Returns the updated item or None."""
+    assignments: list[str] = ["updated_at = datetime('now')"]
+    params: list[int | str | None] = []
+
+    if checked is not None:
+        assignments.append("checked = ?")
+        params.append(1 if checked else 0)
+    if ingredient is not None:
+        assignments.append("ingredient = ?")
+        params.append(ingredient)
+    if qty_num is not None:
+        assignments.append("qty_num = ?")
+        params.append(qty_num)
+    if qty_den is not None:
+        assignments.append("qty_den = ?")
+        params.append(qty_den)
+    if unit is not None:
+        assignments.append("unit = ?")
+        params.append(unit)
+
+    if len(assignments) == 1:
+        # Nothing to update; just return current state
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM grocery_list_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            return _row_to_grocery_item(row) if row else None
+
+    params.append(item_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            f"UPDATE grocery_list_items SET {', '.join(assignments)} WHERE id = ? RETURNING *",
+            params,
+        ).fetchone()
+    return _row_to_grocery_item(row) if row else None
+
+
+def delete_grocery_item(item_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM grocery_list_items WHERE id = ?", (item_id,))
+
+
+def clear_grocery_list(checked_only: bool = False) -> None:
+    if checked_only:
+        with get_conn() as conn:
+            conn.execute("DELETE FROM grocery_list_items WHERE checked = 1")
+    else:
+        with get_conn() as conn:
+            conn.execute("DELETE FROM grocery_list_items")
+
+
+def merge_grocery_items(item_id: int, other_id: int) -> GroceryListItem | None:
+    """Merge *other_id* into *item_id*: sum quantities (if units match), combine
+    raw strings and recipe_ids, then delete *other_id*.
+
+    Returns the surviving item, or None if either item does not exist.
+    """
+    from fractions import Fraction as _Fraction
+
+    with get_conn() as conn:
+        item = conn.execute(
+            "SELECT * FROM grocery_list_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        other = conn.execute(
+            "SELECT * FROM grocery_list_items WHERE id = ?", (other_id,)
+        ).fetchone()
+
+        if item is None or other is None:
+            return None
+
+        # Sum quantities only when both items have a qty and matching units
+        if (
+            item["qty_num"] is not None
+            and other["qty_num"] is not None
+            and item["unit"] == other["unit"]
+        ):
+            qty = _Fraction(item["qty_num"], item["qty_den"]) + _Fraction(other["qty_num"], other["qty_den"])
+            new_qty_num, new_qty_den = qty.numerator, qty.denominator
+        else:
+            new_qty_num = item["qty_num"]
+            new_qty_den = item["qty_den"]
+
+        old_raw = json.loads(item["original_raw"])
+        other_raw = json.loads(other["original_raw"])
+        new_raw = json.dumps(old_raw + other_raw)
+
+        old_ids = json.loads(item["recipe_ids"])
+        other_ids = json.loads(other["recipe_ids"])
+        new_ids = json.dumps(list({*old_ids, *other_ids}))
+
+        row = conn.execute(
+            """
+            UPDATE grocery_list_items
+            SET qty_num = ?, qty_den = ?,
+                original_raw = ?,
+                recipe_ids = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            RETURNING *
+            """,
+            (new_qty_num, new_qty_den, new_raw, new_ids, item_id),
+        ).fetchone()
+        conn.execute("DELETE FROM grocery_list_items WHERE id = ?", (other_id,))
+
+    return _row_to_grocery_item(row) if row else None
+
+
+def _row_to_grocery_item(row: sqlite3.Row) -> GroceryListItem:
+    return GroceryListItem(
+        id=row["id"],
+        qty_num=row["qty_num"],
+        qty_den=row["qty_den"],
+        unit=row["unit"],
+        ingredient=row["ingredient"],
+        original_raw=json.loads(row["original_raw"]),
+        recipe_ids=json.loads(row["recipe_ids"]),
+        checked=bool(row["checked"]),
+        approximate=bool(row["approximate"]),
+        sort_order=row["sort_order"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 
 def _canonical_recipe_fields(recipe_json: dict) -> tuple[str | None, str | None, int | None, str | None, str | None, str | None]:

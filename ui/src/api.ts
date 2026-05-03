@@ -1,4 +1,4 @@
-import type { ActiveFilters, Collection, DiscoverResponse, FilterOptions, RecipeDetail, ScrapeRunStats, SearchResult } from './types'
+import type { ActiveFilters, Collection, DiscoverResponse, FilterOptions, GroceryListItem, RecipeDetail, ScrapeRunStats, SearchResult } from './types'
 
 const BASE = '/api'
 
@@ -154,4 +154,52 @@ export async function addRecipeToCollection(collectionId: number, recipeId: numb
 
 export async function removeRecipeFromCollection(collectionId: number, recipeId: number): Promise<void> {
   await fetch(`${BASE}/collections/${collectionId}/recipes/${recipeId}`, { method: 'DELETE' })
+}
+
+export async function addRecipeToGroceryList(recipeId: number, scaleFactor: number): Promise<GroceryListItem[]> {
+  const params = new URLSearchParams({ scale_factor: String(scaleFactor) })
+  const res = await fetch(`${BASE}/grocery-list/from-recipe/${recipeId}?${params}`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to add to grocery list')
+  return res.json() as Promise<GroceryListItem[]>
+}
+
+export async function getGroceryList(): Promise<GroceryListItem[]> {
+  const res = await fetch(`${BASE}/grocery-list`)
+  if (!res.ok) throw new Error('Failed to fetch grocery list')
+  return res.json() as Promise<GroceryListItem[]>
+}
+
+export async function addGroceryItem(raw: string): Promise<GroceryListItem> {
+  const res = await fetch(`${BASE}/grocery-list/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ raw }),
+  })
+  if (!res.ok) throw new Error('Failed to add grocery item')
+  return res.json() as Promise<GroceryListItem>
+}
+
+export async function updateGroceryItem(id: number, updates: Partial<Pick<GroceryListItem, 'checked' | 'ingredient' | 'qty_num' | 'qty_den' | 'unit'>>): Promise<GroceryListItem> {
+  const res = await fetch(`${BASE}/grocery-list/items/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!res.ok) throw new Error('Failed to update grocery item')
+  return res.json() as Promise<GroceryListItem>
+}
+
+export async function deleteGroceryItem(id: number): Promise<void> {
+  await fetch(`${BASE}/grocery-list/items/${id}`, { method: 'DELETE' })
+}
+
+export async function clearGroceryList(checkedOnly = false): Promise<void> {
+  const params = checkedOnly ? '?checked_only=true' : ''
+  await fetch(`${BASE}/grocery-list${params}`, { method: 'DELETE' })
+}
+
+export async function mergeGroceryItems(itemId: number, otherId: number): Promise<GroceryListItem> {
+  const res = await fetch(`${BASE}/grocery-list/items/${itemId}/merge/${otherId}`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to merge grocery items')
+  return res.json() as Promise<GroceryListItem>
 }

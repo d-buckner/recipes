@@ -66,6 +66,23 @@ export interface RecipeDetail {
   has_image: boolean
 }
 
+export interface GroceryListItem {
+  id: number
+  qty_num: number | null
+  qty_den: number
+  qty_display: string | null
+  unit: string | null
+  ingredient: string
+  original_raw: string[]
+  recipe_ids: number[]
+  recipe_titles: Record<string, string>
+  checked: boolean
+  approximate: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
 export interface ScrapeRunStats {
   total: number
   discovered: number

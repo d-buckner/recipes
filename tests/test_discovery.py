@@ -7,10 +7,13 @@ import responses as responses_lib
 from recipe_scrapers._exceptions import NoSchemaFoundInWildMode, RecipeSchemaNotFound
 
 from recipes.discovery import (
+    SitemapProbe,
     _collect_leaf_sitemaps,
     _is_valid_recipe,
     _log_sample_size,
     _probe_sitemap,
+    _sample_urls,
+    _select_recipe_sitemaps,
     discover_site,
 )
 
@@ -107,6 +110,43 @@ class TestLogSampleSize:
 
     def test_capped_at_max(self):
         assert _log_sample_size(1_000_000) == 20
+
+
+class TestSampleUrls:
+    def test_returns_all_when_smaller_than_sample(self):
+        urls = ["a", "b", "c"]
+        assert _sample_urls(urls, 5) == urls
+
+    def test_samples_deterministically_across_range(self):
+        urls = [str(i) for i in range(10)]
+        assert _sample_urls(urls, 4) == ["0", "3", "6", "9"]
+
+
+class TestSelectRecipeSitemaps:
+    def test_high_confidence_keeps_medium_and_high_hits(self):
+        high = object()
+        medium = object()
+        low = object()
+        selection = _select_recipe_sitemaps(
+            [
+                SitemapProbe(high, 10, 8),
+                SitemapProbe(medium, 10, 2),
+                SitemapProbe(low, 10, 0),
+            ],
+            [high, medium, low],
+        )
+        assert selection.reason == "high_confidence"
+        assert selection.sitemaps == [high, medium]
+
+    def test_no_hits_falls_back_to_all_sitemaps(self):
+        a = object()
+        b = object()
+        selection = _select_recipe_sitemaps(
+            [SitemapProbe(a, 10, 0), SitemapProbe(b, 10, 0)],
+            [a, b],
+        )
+        assert selection.reason == "fallback_all"
+        assert selection.sitemaps == [a, b]
 
 
 # ---------------------------------------------------------------------------

@@ -710,6 +710,60 @@ a.recipe-card {
   max-width: 720px;
 }
 
+.servings-scaler {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.servings-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.servings-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--card-bg);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.servings-btn:hover:not(:disabled) {
+  border-color: var(--red);
+  background: var(--bg);
+}
+
+.servings-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.servings-count {
+  font-size: 17px;
+  font-weight: 700;
+  min-width: 24px;
+  text-align: center;
+}
+
+.servings-added-confirm {
+  font-size: 13px;
+  color: var(--text-muted);
+  animation: fade-in 0.2s ease;
+}
+
 .recipe-columns {
   display: grid;
   grid-template-columns: minmax(200px, 280px) 1fr;
@@ -732,7 +786,7 @@ a.recipe-card {
     gap: 8px;
   }
 
-  .add-site-anchor {
+  .btn-add {
     margin-left: auto;
   }
 
@@ -1903,3 +1957,164 @@ a.recipe-card {
   flex-shrink: 0;
 }
 .toast-close:hover { opacity: 1; }
+
+/* ── Grocery List Page ── */
+.grocery-page {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 20px 16px 80px;
+}
+
+.grocery-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.grocery-add-form {
+  display: flex;
+  gap: 8px;
+}
+
+.grocery-add-input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: var(--card-bg);
+  color: var(--text);
+  outline: none;
+}
+.grocery-add-input:focus {
+  border-color: var(--red);
+}
+
+.grocery-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.grocery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.grocery-category {}
+
+.grocery-category-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  padding-left: 4px;
+}
+
+.grocery-items {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.grocery-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--card-bg);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  transition: opacity 0.15s;
+}
+.grocery-row--checked {
+  opacity: 0.45;
+}
+
+.grocery-checkbox {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--red);
+  cursor: pointer;
+}
+
+.grocery-label {
+  flex: 1;
+  font-size: 15px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grocery-row--checked .grocery-label {
+  text-decoration: line-through;
+}
+
+.grocery-sources {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.grocery-source-chip {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+}
+.grocery-source-chip:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.grocery-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  flex-shrink: 0;
+  opacity: 0.5;
+  line-height: 1;
+}
+.grocery-delete:hover {
+  opacity: 1;
+  color: var(--red);
+}
+
+.grocery-checked-section {
+  margin-top: 24px;
+}
+
+.grocery-checked-toggle {
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 0;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.grocery-checked-toggle:hover {
+  color: var(--text);
+}
