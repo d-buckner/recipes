@@ -1,7 +1,7 @@
 import logging
 import math
-import random
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import requests
@@ -19,6 +19,24 @@ _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 # Hit-rate thresholds for sitemap classification
 _HIGH_HIT_RATE = 0.40   # ≥40%  → dedicated recipe sitemap
 _MEDIUM_HIT_RATE = 0.10  # ≥10%  → mixed sitemap with meaningful recipe content
+
+
+@dataclass(frozen=True)
+class SitemapProbe:
+    sitemap: object
+    n_sampled: int
+    n_hits: int
+
+    @property
+    def hit_rate(self) -> float:
+        return self.n_hits / self.n_sampled if self.n_sampled else 0.0
+
+
+@dataclass(frozen=True)
+class SitemapSelection:
+    sitemaps: list[object]
+    reason: str
+    best_rate: float
 
 
 def _collect_leaf_sitemaps(node) -> list:
@@ -41,9 +59,21 @@ def _log_sample_size(n_total: int, min_n: int = 5, max_n: int = 20) -> int:
     return min(max_n, max(min_n, int(math.log2(n_total) * 2.5)))
 
 
+def _sample_urls(urls: list[str], n_sample: int) -> list[str]:
+    """Return a deterministic, evenly-spaced sample from a sitemap URL list."""
+    if n_sample <= 0:
+        return []
+    if len(urls) <= n_sample:
+        return urls
+    if n_sample == 1:
+        return [urls[0]]
+    step = (len(urls) - 1) / (n_sample - 1)
+    return [urls[round(i * step)] for i in range(n_sample)]
+
+
 def _probe_sitemap(sitemap) -> tuple[int, int]:
     """
-    Randomly sample URLs from a sitemap and count recipe hits.
+    Deterministically sample URLs from a sitemap and count recipe hits.
     Returns (n_sampled, n_hits).
     """
     all_urls = [p.url for p in sitemap.all_pages() if p.url]
@@ -52,7 +82,7 @@ def _probe_sitemap(sitemap) -> tuple[int, int]:
     if n_sample == 0:
         return 0, 0
 
-    sample = random.sample(all_urls, n_sample) if n_total > n_sample else all_urls
+    sample = _sample_urls(all_urls, n_sample)
     hits = 0
     for url in sample:
         try:
@@ -69,6 +99,23 @@ def _probe_sitemap(sitemap) -> tuple[int, int]:
             log.debug("  probe error (%s): %s", type(exc).__name__, url)
 
     return n_sample, hits
+
+
+def _select_recipe_sitemaps(probes: list[SitemapProbe], leaf_sitemaps: list[object]) -> SitemapSelection:
+    """Select recipe-rich sitemaps from probe results.
+
+    The thresholds are intentionally isolated from network and parser work so
+    the discovery policy can change without touching the crawler mechanics.
+    """
+    max_rate = max((probe.hit_rate for probe in probes), default=0.0)
+
+    if max_rate >= _HIGH_HIT_RATE:
+        selected = [probe.sitemap for probe in probes if probe.hit_rate >= _MEDIUM_HIT_RATE]
+        return SitemapSelection(selected, "high_confidence", max_rate)
+    if max_rate > 0:
+        selected = [probe.sitemap for probe in probes if probe.hit_rate > 0]
+        return SitemapSelection(selected, "any_hits", max_rate)
+    return SitemapSelection(leaf_sitemaps, "fallback_all", max_rate)
 
 
 def _urls_from_sitemap_url(sitemap_url: str, hostname: str) -> list[tuple[str, str]]:
@@ -132,7 +179,7 @@ def discover_site(site_url: str) -> int:
     Crawl sitemaps for a site via robots.txt, select recipe-rich sitemaps by
     hit-rate, and insert all their URLs into the db.
 
-    Each leaf sitemap is probed with a logarithmic random sample.  Sitemaps are
+    Each leaf sitemap is probed with a logarithmic deterministic sample.  Sitemaps are
     ranked by recipe hit-rate and selected as follows:
       - If the best sitemap is ≥ HIGH_HIT_RATE (40 %): keep all sitemaps
         with rate ≥ MEDIUM_HIT_RATE (10 %) — these are the recipe-specific ones.
@@ -156,34 +203,30 @@ def discover_site(site_url: str) -> int:
     for s in leaf_sitemaps:
         log.debug("  sitemap: %s", s.url)
 
-    # Probe each sitemap and compute hit rate
-    probed: list[tuple[object, float]] = []  # (sitemap, hit_rate)
+    probes: list[SitemapProbe] = []
     for s in leaf_sitemaps:
         n_sampled, n_hits = _probe_sitemap(s)
-        rate = n_hits / n_sampled if n_sampled else 0.0
-        log.info("  probe %s: %d/%d hits (%.0f%%)", s.url, n_hits, n_sampled, rate * 100)
-        probed.append((s, rate))
+        probe = SitemapProbe(s, n_sampled, n_hits)
+        log.info("  probe %s: %d/%d hits (%.0f%%)", s.url, n_hits, n_sampled, probe.hit_rate * 100)
+        probes.append(probe)
 
-    max_rate = max((r for _, r in probed), default=0.0)
+    selection = _select_recipe_sitemaps(probes, leaf_sitemaps)
 
-    if max_rate >= _HIGH_HIT_RATE:
-        selected = [s for s, r in probed if r >= _MEDIUM_HIT_RATE]
+    if selection.reason == "high_confidence":
         log.info(
             "High-confidence recipe sitemaps found (best %.0f%%); using %d sitemap(s) with ≥%.0f%% hit rate",
-            max_rate * 100, len(selected), _MEDIUM_HIT_RATE * 100,
+            selection.best_rate * 100, len(selection.sitemaps), _MEDIUM_HIT_RATE * 100,
         )
-    elif max_rate > 0:
-        selected = [s for s, r in probed if r > 0]
+    elif selection.reason == "any_hits":
         log.info(
             "No dedicated recipe sitemap (best %.0f%%); using %d sitemap(s) with any hits",
-            max_rate * 100, len(selected),
+            selection.best_rate * 100, len(selection.sitemaps),
         )
     else:
-        selected = leaf_sitemaps
-        log.warning("Probe found no recipe hits; falling back to all %d sitemap(s)", len(selected))
+        log.warning("Probe found no recipe hits; falling back to all %d sitemap(s)", len(selection.sitemaps))
 
     urls: list[tuple[str, str]] = []
-    for sitemap in selected:
+    for sitemap in selection.sitemaps:
         for page in sitemap.all_pages():
             url = page.url
             if url:

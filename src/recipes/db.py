@@ -4,7 +4,8 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Generator
 
-from .models import Collection, RecipeRow, RecipeStatus, SearchResult, ScrapeRunStats
+from .models import Collection, JobRun, RecipeRow, RecipeStatus, SearchResult, ScrapeRunStats
+from .query import RecipeFilters, SEARCH_RESULT_COLUMNS, in_placeholders
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +49,12 @@ CREATE TABLE IF NOT EXISTS recipes (
     site        TEXT    NOT NULL,
     status      TEXT    NOT NULL DEFAULT 'discovered',
     recipe_json TEXT,
+    title       TEXT,
+    author      TEXT,
+    total_time  INTEGER,
+    site_name   TEXT,
+    cuisine_json TEXT,
+    category_json TEXT,
     error_msg   TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     claimed_at  TEXT,
@@ -123,6 +130,26 @@ CREATE TABLE IF NOT EXISTS collection_recipes (
 CREATE TABLE IF NOT EXISTS recipe_embedding_meta (
     dim INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'queued',
+    total       INTEGER,
+    processed   INTEGER NOT NULL DEFAULT 0,
+    succeeded   INTEGER NOT NULL DEFAULT 0,
+    failed      INTEGER NOT NULL DEFAULT 0,
+    message     TEXT,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    started_at  TEXT,
+    finished_at TEXT,
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recipes_status_updated ON recipes(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_recipes_author ON recipes(author);
+CREATE INDEX IF NOT EXISTS idx_recipes_total_time ON recipes(total_time);
+CREATE INDEX IF NOT EXISTS idx_recipes_site ON recipes(site);
 """
 
 
@@ -131,6 +158,12 @@ _MIGRATIONS = [
     "ALTER TABLE recipes ADD COLUMN claimed_at TEXT",
     "ALTER TABLE recipes ADD COLUMN thumbnail BLOB",
     "ALTER TABLE recipes ADD COLUMN image BLOB",
+    "ALTER TABLE recipes ADD COLUMN title TEXT",
+    "ALTER TABLE recipes ADD COLUMN author TEXT",
+    "ALTER TABLE recipes ADD COLUMN total_time INTEGER",
+    "ALTER TABLE recipes ADD COLUMN site_name TEXT",
+    "ALTER TABLE recipes ADD COLUMN cuisine_json TEXT",
+    "ALTER TABLE recipes ADD COLUMN category_json TEXT",
 ]
 
 
@@ -154,6 +187,30 @@ def _migrate_list_fields() -> None:
                     "UPDATE recipes SET recipe_json = ? WHERE id = ?",
                     (json.dumps(data), row["id"]),
                 )
+
+
+def _backfill_recipe_columns() -> None:
+    """Populate canonical columns for rows saved before these columns existed."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, recipe_json FROM recipes
+            WHERE recipe_json IS NOT NULL
+              AND title IS NULL
+            """
+        ).fetchall()
+        for row in rows:
+            data = json.loads(row["recipe_json"])
+            title, author, total_time, site_name, cuisine_json, category_json = _canonical_recipe_fields(data)
+            conn.execute(
+                """
+                UPDATE recipes
+                SET title = ?, author = ?, total_time = ?, site_name = ?,
+                    cuisine_json = ?, category_json = ?
+                WHERE id = ?
+                """,
+                (title, author, total_time, site_name, cuisine_json, category_json, row["id"]),
+            )
 
 
 def _ensure_vec_table(conn: sqlite3.Connection, dim: int) -> None:
@@ -204,6 +261,7 @@ def init_db(db_path: str | None = None) -> None:
         if settings.embed_model:
             _ensure_vec_table(conn, settings.embed_dim)
     _migrate_list_fields()
+    _backfill_recipe_columns()
 
 
 def reset_complete_to_discovered() -> int:
@@ -283,6 +341,122 @@ def delete_site(hostname: str) -> int:
         return cursor.rowcount
 
 
+def create_job(kind: str, total: int | None = None, message: str | None = None) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO jobs (kind, total, message)
+            VALUES (?, ?, ?)
+            """,
+            (kind, total, message),
+        )
+        return cursor.lastrowid  # type: ignore[return-value]
+
+
+def start_job(job_id: int, total: int | None = None, message: str | None = None) -> None:
+    assignments = [
+        "status = 'running'",
+        "started_at = COALESCE(started_at, datetime('now'))",
+        "updated_at = datetime('now')",
+    ]
+    params: list[str | int | None] = []
+    if total is not None:
+        assignments.append("total = ?")
+        params.append(total)
+    if message is not None:
+        assignments.append("message = ?")
+        params.append(message)
+    params.append(job_id)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE jobs SET {', '.join(assignments)} WHERE id = ?",
+            params,
+        )
+
+
+def update_job_progress(
+    job_id: int,
+    *,
+    processed_delta: int = 0,
+    succeeded_delta: int = 0,
+    failed_delta: int = 0,
+    message: str | None = None,
+) -> None:
+    assignments = [
+        "processed = processed + ?",
+        "succeeded = succeeded + ?",
+        "failed = failed + ?",
+        "updated_at = datetime('now')",
+    ]
+    params: list[str | int | None] = [processed_delta, succeeded_delta, failed_delta]
+    if message is not None:
+        assignments.append("message = ?")
+        params.append(message)
+    params.append(job_id)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE jobs SET {', '.join(assignments)} WHERE id = ?",
+            params,
+        )
+
+
+def finish_job(job_id: int, status: str, message: str | None = None) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = ?,
+                message = COALESCE(?, message),
+                finished_at = datetime('now'),
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (status, message, job_id),
+        )
+
+
+def get_job(job_id: int) -> JobRun | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, kind, status, total, processed, succeeded, failed,
+                   message, created_at, started_at, finished_at, updated_at
+            FROM jobs
+            WHERE id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        return _row_to_job(row) if row else None
+
+
+def list_jobs(limit: int = 20) -> list[JobRun]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, kind, status, total, processed, succeeded, failed,
+                   message, created_at, started_at, finished_at, updated_at
+            FROM jobs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [_row_to_job(row) for row in rows]
+
+
+def count_pending_urls(sites: list[str] | None = None) -> int:
+    if sites is not None and not sites:
+        return 0
+    site_filter = f" AND site IN {in_placeholders(sites)}" if sites else ""
+    params = sites or []
+    with get_conn() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM recipes WHERE status = 'discovered'{site_filter}",
+            params,
+        ).fetchone()
+        return row["cnt"] or 0
+
+
 def list_pending_sites() -> list[str]:
     """Return distinct sites that have at least one discovered recipe."""
     with get_conn() as conn:
@@ -344,19 +518,41 @@ def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = Non
     description = stored_json.get("description", "") or ""
     ingredients = " ".join(stored_json.get("ingredients", []) or [])
     keywords = " ".join(stored_json.get("keywords", []) or []) if isinstance(stored_json.get("keywords"), list) else (stored_json.get("keywords") or "")
+    title, author, total_time, site_name, cuisine_json, category_json = _canonical_recipe_fields(stored_json)
 
     with get_conn() as conn:
         conn.execute(
             """
             UPDATE recipes
-            SET status = 'complete', recipe_json = ?, thumbnail = ?, image = ?, updated_at = datetime('now')
+            SET status = 'complete',
+                recipe_json = ?,
+                title = ?,
+                author = ?,
+                total_time = ?,
+                site_name = ?,
+                cuisine_json = ?,
+                category_json = ?,
+                thumbnail = ?,
+                image = ?,
+                updated_at = datetime('now')
             WHERE id = ?
             """,
-            (json.dumps(stored_json), thumbnail, image, recipe_id),
+            (
+                json.dumps(stored_json),
+                title,
+                author,
+                total_time,
+                site_name,
+                cuisine_json,
+                category_json,
+                thumbnail,
+                image,
+                recipe_id,
+            ),
         )
         conn.execute(
             "INSERT OR REPLACE INTO recipe_fts (id, title, description, ingredients, keywords) VALUES (?, ?, ?, ?, ?)",
-            (recipe_id, title, description, ingredients, keywords),
+            (recipe_id, title or "", description, ingredients, keywords),
         )
 
 
@@ -434,10 +630,6 @@ def fail_recipe(recipe_id: int, error_msg: str, max_retries: int = 3) -> None:
         )
 
 
-def _in_placeholders(values: list[str]) -> str:
-    return "(" + ",".join("?" * len(values)) + ")"
-
-
 def search_recipes(
     query: str,
     limit: int = 20,
@@ -449,50 +641,19 @@ def search_recipes(
     min_time: int | None = None,
     max_time: int | None = None,
 ) -> list[SearchResult]:
-    extra_conditions: list[str] = []
-    extra_params: list[str | int] = []
-    if author:
-        extra_conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
-        extra_params.extend(author)
-    if cuisine:
-        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value IN {_in_placeholders(cuisine)})")
-        extra_params.extend(cuisine)
-    if category:
-        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value IN {_in_placeholders(category)})")
-        extra_params.extend(category)
-    if site:
-        extra_conditions.append(f"r.site IN {_in_placeholders(site)}")
-        extra_params.extend(site)
-    if min_time is not None or max_time is not None:
-        extra_conditions.append("json_extract(r.recipe_json, '$.total_time') IS NOT NULL")
-    if min_time is not None:
-        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) >= ?")
-        extra_params.append(min_time)
-    if max_time is not None:
-        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) <= ?")
-        extra_params.append(max_time)
-    extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
+    filters = RecipeFilters(
+        author=author or [],
+        cuisine=cuisine or [],
+        category=category or [],
+        site=site or [],
+        min_time=min_time,
+        max_time=max_time,
+    )
+    extra_where, extra_params = filters.to_sql()
     with get_conn() as conn:
         rows = conn.execute(
             f"""
-            SELECT r.id, r.url, r.site,
-                   json_extract(r.recipe_json, '$.title') AS title,
-                   json_extract(r.recipe_json, '$.description') AS description,
-                   json_extract(r.recipe_json, '$.total_time') AS total_time,
-                   json_extract(r.recipe_json, '$.yields') AS yields,
-                   json_extract(r.recipe_json, '$.image') AS image,
-                   json_extract(r.recipe_json, '$.site_name') AS site_name,
-                   json_extract(r.recipe_json, '$.author') AS author,
-                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
-                   json_extract(r.recipe_json, '$.category') AS category,
-                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
-                   CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
-                   COALESCE(
-                     (SELECT GROUP_CONCAT(c.name, '||')
-                      FROM collection_recipes cr JOIN collections c ON c.id = cr.collection_id
-                      WHERE cr.recipe_id = r.id),
-                     ''
-                   ) AS collection_names
+            SELECT {SEARCH_RESULT_COLUMNS}
             FROM recipe_fts_search fs
             JOIN recipes r ON r.id = fs.rowid
             LEFT JOIN favorites f ON f.recipe_id = r.id
@@ -543,25 +704,8 @@ def remove_favorite(recipe_id: int) -> None:
 def list_favorites() -> list[SearchResult]:
     with get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT r.id, r.url, r.site,
-                   json_extract(r.recipe_json, '$.title') AS title,
-                   json_extract(r.recipe_json, '$.description') AS description,
-                   json_extract(r.recipe_json, '$.total_time') AS total_time,
-                   json_extract(r.recipe_json, '$.yields') AS yields,
-                   json_extract(r.recipe_json, '$.image') AS image,
-                   json_extract(r.recipe_json, '$.site_name') AS site_name,
-                   json_extract(r.recipe_json, '$.author') AS author,
-                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
-                   json_extract(r.recipe_json, '$.category') AS category,
-                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
-                   1 AS is_favorite,
-                   COALESCE(
-                     (SELECT GROUP_CONCAT(c.name, '||')
-                      FROM collection_recipes cr JOIN collections c ON c.id = cr.collection_id
-                      WHERE cr.recipe_id = r.id),
-                     ''
-                   ) AS collection_names
+            f"""
+            SELECT {SEARCH_RESULT_COLUMNS}
             FROM favorites f
             JOIN recipes r ON r.id = f.recipe_id
             WHERE r.status = 'complete'
@@ -607,53 +751,22 @@ def list_recipes(
     min_time: int | None = None,
     max_time: int | None = None,
 ) -> list[SearchResult]:
-    conditions = ["r.status = 'complete'"]
-    params: list[str | int] = []
-    if author:
-        conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
-        params.extend(author)
-    if cuisine:
-        conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value IN {_in_placeholders(cuisine)})")
-        params.extend(cuisine)
-    if category:
-        conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value IN {_in_placeholders(category)})")
-        params.extend(category)
-    if site:
-        conditions.append(f"r.site IN {_in_placeholders(site)}")
-        params.extend(site)
-    if min_time is not None or max_time is not None:
-        conditions.append("json_extract(r.recipe_json, '$.total_time') IS NOT NULL")
-    if min_time is not None:
-        conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) >= ?")
-        params.append(min_time)
-    if max_time is not None:
-        conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) <= ?")
-        params.append(max_time)
-    where = " AND ".join(conditions)
+    filters = RecipeFilters(
+        author=author or [],
+        cuisine=cuisine or [],
+        category=category or [],
+        site=site or [],
+        min_time=min_time,
+        max_time=max_time,
+    )
+    extra_where, params = filters.to_sql()
     with get_conn() as conn:
         rows = conn.execute(
             f"""
-            SELECT r.id, r.url, r.site,
-                   json_extract(r.recipe_json, '$.title') AS title,
-                   json_extract(r.recipe_json, '$.description') AS description,
-                   json_extract(r.recipe_json, '$.total_time') AS total_time,
-                   json_extract(r.recipe_json, '$.yields') AS yields,
-                   json_extract(r.recipe_json, '$.image') AS image,
-                   json_extract(r.recipe_json, '$.site_name') AS site_name,
-                   json_extract(r.recipe_json, '$.author') AS author,
-                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
-                   json_extract(r.recipe_json, '$.category') AS category,
-                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
-                   CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
-                   COALESCE(
-                     (SELECT GROUP_CONCAT(c.name, '||')
-                      FROM collection_recipes cr JOIN collections c ON c.id = cr.collection_id
-                      WHERE cr.recipe_id = r.id),
-                     ''
-                   ) AS collection_names
+            SELECT {SEARCH_RESULT_COLUMNS}
             FROM recipes r
             LEFT JOIN favorites f ON f.recipe_id = r.id
-            WHERE {where}
+            WHERE r.status = 'complete'{extra_where}
             ORDER BY r.updated_at DESC
             LIMIT ? OFFSET ?
             """,
@@ -674,7 +787,7 @@ def list_filter_options() -> dict[str, list[dict[str, str | int]]]:
         cuisine_rows = conn.execute(
             """
             SELECT je.value, COUNT(*) AS cnt
-            FROM recipes r, json_each(r.recipe_json, '$.cuisine') je
+            FROM recipes r, json_each(r.cuisine_json) je
             WHERE r.status = 'complete' AND je.value != ''
             GROUP BY je.value
             ORDER BY cnt DESC, je.value
@@ -685,7 +798,7 @@ def list_filter_options() -> dict[str, list[dict[str, str | int]]]:
         category_rows = conn.execute(
             """
             SELECT je.value, COUNT(*) AS cnt
-            FROM recipes r, json_each(r.recipe_json, '$.category') je
+            FROM recipes r, json_each(r.category_json) je
             WHERE r.status = 'complete' AND je.value != ''
             GROUP BY je.value
             ORDER BY cnt DESC, je.value
@@ -695,11 +808,11 @@ def list_filter_options() -> dict[str, list[dict[str, str | int]]]:
 
         author_rows = conn.execute(
             """
-            SELECT json_extract(recipe_json, '$.author') AS value, COUNT(*) AS cnt
+            SELECT author AS value, COUNT(*) AS cnt
             FROM recipes
             WHERE status = 'complete'
-              AND json_extract(recipe_json, '$.author') IS NOT NULL
-              AND json_extract(recipe_json, '$.author') != ''
+              AND author IS NOT NULL
+              AND author != ''
             GROUP BY value
             ORDER BY cnt DESC, value
             LIMIT 100
@@ -765,53 +878,22 @@ def semantic_search(
     import struct
     blob = struct.pack(f"{len(query_vector)}f", *query_vector)
 
-    extra_conditions: list[str] = []
-    extra_params: list = []
-    if author:
-        extra_conditions.append(f"json_extract(r.recipe_json, '$.author') IN {_in_placeholders(author)}")
-        extra_params.extend(author)
-    if cuisine:
-        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.cuisine') WHERE value IN {_in_placeholders(cuisine)})")
-        extra_params.extend(cuisine)
-    if category:
-        extra_conditions.append(f"EXISTS (SELECT 1 FROM json_each(r.recipe_json, '$.category') WHERE value IN {_in_placeholders(category)})")
-        extra_params.extend(category)
-    if site:
-        extra_conditions.append(f"r.site IN {_in_placeholders(site)}")
-        extra_params.extend(site)
-    if min_time is not None or max_time is not None:
-        extra_conditions.append("json_extract(r.recipe_json, '$.total_time') IS NOT NULL")
-    if min_time is not None:
-        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) >= ?")
-        extra_params.append(min_time)
-    if max_time is not None:
-        extra_conditions.append("CAST(json_extract(r.recipe_json, '$.total_time') AS INTEGER) <= ?")
-        extra_params.append(max_time)
-    extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
+    filters = RecipeFilters(
+        author=author or [],
+        cuisine=cuisine or [],
+        category=category or [],
+        site=site or [],
+        min_time=min_time,
+        max_time=max_time,
+    )
+    extra_where, extra_params = filters.to_sql()
 
     # vec0 KNN: fetch (limit+offset)*2 candidates to allow post-filter headroom
     candidates = (limit + offset) * 2
     with get_conn() as conn:
         rows = conn.execute(
             f"""
-            SELECT r.id, r.url, r.site,
-                   json_extract(r.recipe_json, '$.title') AS title,
-                   json_extract(r.recipe_json, '$.description') AS description,
-                   json_extract(r.recipe_json, '$.total_time') AS total_time,
-                   json_extract(r.recipe_json, '$.yields') AS yields,
-                   json_extract(r.recipe_json, '$.image') AS image,
-                   json_extract(r.recipe_json, '$.site_name') AS site_name,
-                   json_extract(r.recipe_json, '$.author') AS author,
-                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
-                   json_extract(r.recipe_json, '$.category') AS category,
-                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
-                   CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
-                   COALESCE(
-                     (SELECT GROUP_CONCAT(c.name, '||')
-                      FROM collection_recipes cr JOIN collections c ON c.id = cr.collection_id
-                      WHERE cr.recipe_id = r.id),
-                     ''
-                   ) AS collection_names
+            SELECT {SEARCH_RESULT_COLUMNS}
             FROM vec_recipes v
             JOIN recipes r ON r.id = v.recipe_id
             LEFT JOIN favorites f ON f.recipe_id = r.id
@@ -922,25 +1004,8 @@ def remove_recipe_from_collection(collection_id: int, recipe_id: int) -> None:
 def list_collection_recipes(collection_id: int, limit: int = 20, offset: int = 0) -> list[SearchResult]:
     with get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT r.id, r.url, r.site,
-                   json_extract(r.recipe_json, '$.title') AS title,
-                   json_extract(r.recipe_json, '$.description') AS description,
-                   json_extract(r.recipe_json, '$.total_time') AS total_time,
-                   json_extract(r.recipe_json, '$.yields') AS yields,
-                   json_extract(r.recipe_json, '$.image') AS image,
-                   json_extract(r.recipe_json, '$.site_name') AS site_name,
-                   json_extract(r.recipe_json, '$.author') AS author,
-                   json_extract(r.recipe_json, '$.cuisine') AS cuisine,
-                   json_extract(r.recipe_json, '$.category') AS category,
-                   (r.thumbnail IS NOT NULL) AS has_thumbnail,
-                   CASE WHEN f.recipe_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
-                   COALESCE(
-                     (SELECT GROUP_CONCAT(c2.name, '||')
-                      FROM collection_recipes cr2 JOIN collections c2 ON c2.id = cr2.collection_id
-                      WHERE cr2.recipe_id = r.id),
-                     ''
-                   ) AS collection_names
+            f"""
+            SELECT {SEARCH_RESULT_COLUMNS}
             FROM collection_recipes cr
             JOIN recipes r ON r.id = cr.recipe_id
             LEFT JOIN favorites f ON f.recipe_id = r.id
@@ -951,6 +1016,42 @@ def list_collection_recipes(collection_id: int, limit: int = 20, offset: int = 0
             (collection_id, limit, offset),
         ).fetchall()
         return [_row_to_search_result(r) for r in rows]
+
+
+def _canonical_recipe_fields(recipe_json: dict) -> tuple[str | None, str | None, int | None, str | None, str | None, str | None]:
+    title = _clean_text(recipe_json.get("title"))
+    author = _clean_text(recipe_json.get("author"))
+    site_name = _clean_text(recipe_json.get("site_name"))
+    total_time = _clean_int(recipe_json.get("total_time"))
+    cuisine = _normalise_list_field(recipe_json.get("cuisine"))
+    category = _normalise_list_field(recipe_json.get("category"))
+    cuisine_json = json.dumps(cuisine) if cuisine else None
+    category_json = json.dumps(category) if category else None
+    return title, author, total_time, site_name, cuisine_json, category_json
+
+
+def _clean_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _clean_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise_list_field(value: object) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [v.strip() for v in str(value).split(",") if v.strip()]
 
 
 def _row_to_recipe(row: sqlite3.Row) -> RecipeRow:
@@ -965,6 +1066,23 @@ def _row_to_recipe(row: sqlite3.Row) -> RecipeRow:
         retry_count=row["retry_count"] or 0,
         claimed_at=row["claimed_at"],
         created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_job(row: sqlite3.Row) -> JobRun:
+    return JobRun(
+        id=row["id"],
+        kind=row["kind"],
+        status=row["status"],
+        total=row["total"],
+        processed=row["processed"],
+        succeeded=row["succeeded"],
+        failed=row["failed"],
+        message=row["message"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
         updated_at=row["updated_at"],
     )
 

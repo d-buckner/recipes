@@ -204,37 +204,61 @@ def run_worker(delay: float | None = None, site: str | None = None) -> dict[str,
     return counts
 
 
-def run_embed_backfill() -> None:
+def run_embed_backfill(job_id: int | None = None) -> dict[str, int]:
     """Re-embed all complete recipes from scratch.
 
     Clears existing embeddings and loops through every complete recipe as fast
     as the embedding API allows.  Intended to be run as a background task from
     the API (e.g. after changing the embedding model).
     """
-    with db.get_conn() as conn:
-        conn.execute("DELETE FROM vec_recipes")
-    log.info("[embed backfill] cleared existing embeddings")
+    counts = {"processed": 0, "succeeded": 0, "failed": 0}
+    if job_id is not None:
+        db.start_job(job_id, message="Clearing existing embeddings")
+    try:
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM vec_recipes")
+        log.info("[embed backfill] cleared existing embeddings")
 
-    ids = db.get_unembedded_ids()
-    log.info("[embed backfill] %d recipe(s) to embed", len(ids))
-    succeeded = 0
-    failed = 0
-    for recipe_id in ids:
-        recipe = db.get_recipe_by_id(recipe_id)
-        if recipe and recipe.recipe_json:
-            text = embeddings.build_recipe_text(recipe.recipe_json)
-            vector = embeddings.get_embedding(text)
-            if vector:
-                db.store_embedding(recipe_id, vector)
-                succeeded += 1
-                log.info("[embed backfill] %d OK: %s", recipe_id, recipe.recipe_json.get("title", ""))
+        ids = db.get_unembedded_ids()
+        if job_id is not None:
+            db.start_job(job_id, total=len(ids), message=f"Embedding {len(ids)} recipe(s)")
+        log.info("[embed backfill] %d recipe(s) to embed", len(ids))
+        for recipe_id in ids:
+            recipe = db.get_recipe_by_id(recipe_id)
+            embedded = False
+            if recipe and recipe.recipe_json:
+                text = embeddings.build_recipe_text(recipe.recipe_json)
+                vector = embeddings.get_embedding(text)
+                if vector:
+                    db.store_embedding(recipe_id, vector)
+                    counts["succeeded"] += 1
+                    embedded = True
+                    log.info("[embed backfill] %d OK: %s", recipe_id, recipe.recipe_json.get("title", ""))
+                else:
+                    counts["failed"] += 1
+                    log.warning("[embed backfill] %d FAIL", recipe_id)
             else:
-                failed += 1
-                log.warning("[embed backfill] %d FAIL", recipe_id)
-        else:
-            failed += 1
-            log.warning("[embed backfill] %d FAIL — no recipe_json", recipe_id)
-    log.info("[embed backfill] done — embedded=%d failed=%d", succeeded, failed)
+                counts["failed"] += 1
+                log.warning("[embed backfill] %d FAIL — no recipe_json", recipe_id)
+            counts["processed"] += 1
+            if job_id is not None:
+                db.update_job_progress(
+                    job_id,
+                    processed_delta=1,
+                    succeeded_delta=1 if embedded else 0,
+                    failed_delta=0 if embedded else 1,
+                )
+        message = "Embedding backfill complete"
+        if counts["failed"]:
+            message = f"Embedding backfill complete with {counts['failed']} failure(s)"
+        if job_id is not None:
+            db.finish_job(job_id, "succeeded", message)
+        log.info("[embed backfill] done — embedded=%d failed=%d", counts["succeeded"], counts["failed"])
+        return counts
+    except Exception as exc:
+        if job_id is not None:
+            db.finish_job(job_id, "failed", str(exc))
+        raise
 
 
 def _run_embed_worker() -> dict[str, int]:
@@ -261,7 +285,7 @@ def _run_embed_worker() -> dict[str, int]:
     return counts
 
 
-def run_workers(delay: float | None = None) -> dict[str, int]:
+def run_workers(delay: float | None = None, job_id: int | None = None) -> dict[str, int]:
     """
     Spawn one worker thread per site that has pending work.
     Sites that already have an active worker (from a previous call still running)
@@ -270,57 +294,76 @@ def run_workers(delay: float | None = None) -> dict[str, int]:
     that throttles embedding requests alongside scraping.
     Returns combined counts for the workers started by this call.
     """
-    actual_delay = delay if delay is not None else settings.rate_limit_delay
-
-    reset = db.reset_stale_processing()
-    if reset:
-        log.info("Reset %d stale processing item(s) back to discovered", reset)
-
-    pending_sites = db.list_pending_sites()
-
-    with _active_lock:
-        sites_to_start = [s for s in pending_sites if s not in _active_sites]
-        _active_sites.update(sites_to_start)
-
-    if not sites_to_start:
-        log.info("No new sites to start (all pending sites already have active workers).")
-        return {"processed": 0, "succeeded": 0, "failed": 0}
-
-    log.info("Starting workers for: %s", sites_to_start)
-
-    def _run_and_release(site: str) -> dict[str, int]:
-        crawl_delay = get_crawl_delay(site)
-        if crawl_delay is not None:
-            log.info("robots.txt Crawl-delay for %s: %.1fs", site, crawl_delay)
-        else:
-            crawl_delay = actual_delay
-            log.info("No Crawl-delay in robots.txt for %s, using default %.1fs", site, crawl_delay)
-        try:
-            return run_worker(crawl_delay, site)
-        finally:
-            with _active_lock:
-                _active_sites.discard(site)
-
     totals: dict[str, int] = {"processed": 0, "succeeded": 0, "failed": 0}
+    try:
+        actual_delay = delay if delay is not None else settings.rate_limit_delay
 
-    embed_future: Future | None = None
+        reset = db.reset_stale_processing()
+        if reset:
+            log.info("Reset %d stale processing item(s) back to discovered", reset)
 
-    n_workers = len(sites_to_start) + (1 if settings.embed_model else 0)
-    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        if settings.embed_model:
-            embed_future = executor.submit(_run_embed_worker)
-            log.info("Embed worker started")
+        pending_sites = db.list_pending_sites()
 
-        scrape_futures = [executor.submit(_run_and_release, site) for site in sites_to_start]
-        for future in as_completed(scrape_futures):
-            result = future.result()
-            for key in totals:
-                totals[key] += result[key]
+        with _active_lock:
+            sites_to_start = [s for s in pending_sites if s not in _active_sites]
+            _active_sites.update(sites_to_start)
 
-        # All scrape workers done — send sentinel to stop the embed worker
-        if embed_future is not None:
-            _embed_queue.put(None)
-            embed_result = embed_future.result()
-            log.info("Embed worker done: embedded=%d failed=%d", embed_result["embedded"], embed_result["failed"])
+        total_pending = db.count_pending_urls(sites_to_start)
+        if job_id is not None:
+            db.start_job(job_id, total=total_pending, message=f"Starting workers for {len(sites_to_start)} site(s)")
 
-    return totals
+        if not sites_to_start:
+            log.info("No new sites to start (all pending sites already have active workers).")
+            if job_id is not None:
+                db.finish_job(job_id, "succeeded", "No pending sites to scrape")
+            return totals
+
+        log.info("Starting workers for: %s", sites_to_start)
+
+        def _run_and_release(site: str) -> dict[str, int]:
+            crawl_delay = get_crawl_delay(site)
+            if crawl_delay is not None:
+                log.info("robots.txt Crawl-delay for %s: %.1fs", site, crawl_delay)
+            else:
+                crawl_delay = actual_delay
+                log.info("No Crawl-delay in robots.txt for %s, using default %.1fs", site, crawl_delay)
+            try:
+                return run_worker(crawl_delay, site)
+            finally:
+                with _active_lock:
+                    _active_sites.discard(site)
+
+        embed_future: Future | None = None
+
+        n_workers = len(sites_to_start) + (1 if settings.embed_model else 0)
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            if settings.embed_model:
+                embed_future = executor.submit(_run_embed_worker)
+                log.info("Embed worker started")
+
+            scrape_futures = [executor.submit(_run_and_release, site) for site in sites_to_start]
+            for future in as_completed(scrape_futures):
+                result = future.result()
+                for key in totals:
+                    totals[key] += result[key]
+                if job_id is not None:
+                    db.update_job_progress(
+                        job_id,
+                        processed_delta=result["processed"],
+                        succeeded_delta=result["succeeded"],
+                        failed_delta=result["failed"],
+                    )
+
+            # All scrape workers done — send sentinel to stop the embed worker
+            if embed_future is not None:
+                _embed_queue.put(None)
+                embed_result = embed_future.result()
+                log.info("Embed worker done: embedded=%d failed=%d", embed_result["embedded"], embed_result["failed"])
+
+        if job_id is not None:
+            db.finish_job(job_id, "succeeded", "Scrape complete")
+        return totals
+    except Exception as exc:
+        if job_id is not None:
+            db.finish_job(job_id, "failed", str(exc))
+        raise

@@ -56,6 +56,12 @@ class DiscoverResponse(BaseModel):
     site: str
 
 
+class StartJobResponse(BaseModel):
+    status: str
+    job_id: int
+    queued: int | None = None
+
+
 class CollectionResponse(BaseModel):
     id: int
     name: str
@@ -73,6 +79,7 @@ class RenameCollectionRequest(BaseModel):
 
 @app.get("/search", response_model=list[SearchResult])
 def search_recipes(
+    response: Response,
     q: str = Query(..., min_length=1),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -88,22 +95,57 @@ def search_recipes(
     filter_kwargs = dict(author=author, cuisine=cuisine, category=category, site=site, min_time=min_time, max_time=max_time)
 
     if mode == "keyword":
+        _set_search_mode_headers(response, requested=mode, used="keyword")
         return db.search_recipes(safe_query, limit=limit, offset=offset, **filter_kwargs)
 
     # Attempt to embed the query for semantic/hybrid modes
     vector: list[float] | None = None
+    degraded_reason: str | None = None
     if settings.embed_model:
         vector = embeddings.get_embedding(q)
+        if vector is None:
+            degraded_reason = "embedding_unavailable"
+    else:
+        degraded_reason = "embedding_model_not_configured"
 
     if mode == "semantic":
         if vector is None:
+            _set_search_mode_headers(response, requested=mode, used="keyword", degraded_reason=degraded_reason)
             return db.search_recipes(safe_query, limit=limit, offset=offset, **filter_kwargs)
+        _set_search_mode_headers(response, requested=mode, used="semantic")
         return db.semantic_search(vector, limit=limit, offset=offset, **filter_kwargs)
 
     # hybrid (default): use FTS-only if embedding unavailable
     if vector is None:
+        _set_search_mode_headers(response, requested=mode, used="keyword", degraded_reason=degraded_reason)
         return db.search_recipes(safe_query, limit=limit, offset=offset, **filter_kwargs)
+    _set_search_mode_headers(response, requested=mode, used="hybrid")
     return db.hybrid_search(safe_query, vector, limit=limit, offset=offset, **filter_kwargs)
+
+
+def _set_search_mode_headers(
+    response: Response,
+    *,
+    requested: str,
+    used: str,
+    degraded_reason: str | None = None,
+) -> None:
+    response.headers["X-Recipes-Search-Mode-Requested"] = requested
+    response.headers["X-Recipes-Search-Mode-Used"] = used
+    response.headers["X-Recipes-Search-Degraded"] = "true" if degraded_reason else "false"
+    if degraded_reason:
+        response.headers["X-Recipes-Search-Degraded-Reason"] = degraded_reason
+
+
+@app.get("/search/capabilities")
+def search_capabilities() -> dict:
+    semantic_enabled = bool(settings.embed_model)
+    return {
+        "default_mode": "hybrid",
+        "available_modes": ["keyword", "semantic", "hybrid"],
+        "semantic_enabled": semantic_enabled,
+        "hybrid_enabled": semantic_enabled,
+    }
 
 
 @app.get("/recipes", response_model=list[SearchResult])
@@ -187,6 +229,19 @@ def get_stats() -> ScrapeRunStats:
     return db.get_stats()
 
 
+@app.get("/jobs")
+def list_jobs(limit: int = Query(default=20, ge=1, le=100)) -> list[dict]:
+    return [job.__dict__ for job in db.list_jobs(limit=limit)]
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: int) -> dict:
+    job = db.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.__dict__
+
+
 @app.get("/filters")
 def get_filter_options() -> dict:
     return db.list_filter_options()
@@ -226,10 +281,12 @@ async def discover_site_endpoint(req: DiscoverRequest) -> DiscoverResponse:
     return DiscoverResponse(discovered=count, site=site)
 
 
-@app.post("/sites/scrape")
-def start_scrape(background_tasks: BackgroundTasks) -> dict[str, str]:
-    background_tasks.add_task(scraper.run_workers)
-    return {"status": "started"}
+@app.post("/sites/scrape", response_model=StartJobResponse)
+def start_scrape(background_tasks: BackgroundTasks) -> StartJobResponse:
+    queued = db.count_pending_urls()
+    job_id = db.create_job("scrape", total=queued, message="Queued scrape")
+    background_tasks.add_task(scraper.run_workers, job_id=job_id)
+    return StartJobResponse(status="started", job_id=job_id, queued=queued)
 
 
 @app.delete("/sites/{hostname}")
@@ -238,19 +295,21 @@ def delete_site(hostname: str) -> dict:
     return {"site": hostname, "deleted": deleted}
 
 
-@app.post("/embed/backfill")
-def start_embed_backfill(background_tasks: BackgroundTasks) -> dict[str, str]:
+@app.post("/embed/backfill", response_model=StartJobResponse)
+def start_embed_backfill(background_tasks: BackgroundTasks) -> StartJobResponse:
     if not settings.embed_model:
         raise HTTPException(status_code=400, detail="Embedding is not configured (RECIPES_EMBED_MODEL is not set)")
-    background_tasks.add_task(scraper.run_embed_backfill)
-    return {"status": "started"}
+    job_id = db.create_job("embed_backfill", message="Queued embedding backfill")
+    background_tasks.add_task(scraper.run_embed_backfill, job_id=job_id)
+    return StartJobResponse(status="started", job_id=job_id)
 
 
 @app.post("/sites/rescrape")
-def rescrape_all(background_tasks: BackgroundTasks) -> dict:
+def rescrape_all(background_tasks: BackgroundTasks) -> StartJobResponse:
     queued = db.reset_complete_to_discovered()
-    background_tasks.add_task(scraper.run_workers)
-    return {"status": "started", "queued": queued}
+    job_id = db.create_job("rescrape", total=queued, message="Queued rescrape")
+    background_tasks.add_task(scraper.run_workers, job_id=job_id)
+    return StartJobResponse(status="started", job_id=job_id, queued=queued)
 
 
 def _collection_to_response(c: Collection) -> CollectionResponse:

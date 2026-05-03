@@ -34,6 +34,22 @@ class Collection:
 
 
 @dataclass
+class JobRun:
+    id: int
+    kind: str
+    status: str
+    total: int | None
+    processed: int
+    succeeded: int
+    failed: int
+    message: str | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+    updated_at: str
+
+
+@dataclass
 class SearchResult:
     id: int
     url: str
