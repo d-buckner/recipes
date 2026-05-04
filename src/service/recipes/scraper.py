@@ -10,7 +10,7 @@ from PIL import Image
 from recipe_scrapers import scrape_html
 from recipe_scrapers._exceptions import NoSchemaFoundInWildMode, RecipeSchemaNotFound, WebsiteNotImplementedError
 
-from . import db, embeddings
+from . import db, embeddings, templatize
 from .config import settings
 from .models import RecipeRow
 
@@ -24,6 +24,9 @@ _active_lock = threading.Lock()
 # Embed requests from process_one() are dropped here; _run_embed_worker() drains it.
 # None is the sentinel that tells the worker to stop.
 _embed_queue: queue.Queue[tuple[int, dict] | None] = queue.Queue()
+
+# Templatize requests from process_one() are dropped here; _run_templatize_worker() drains it.
+_templatize_queue: queue.Queue[tuple[int, dict] | None] = queue.Queue()
 
 CLAIM_TIMEOUT = 60  # seconds before a stale processing item is reclaimed (2x fetch timeout)
 MAX_RETRIES = 3
@@ -166,6 +169,8 @@ def process_one(recipe: RecipeRow, max_retries: int = MAX_RETRIES) -> bool:
         log.info("[%d] OK: %s", recipe.id, recipe_json["title"])
         if settings.embed_model:
             _embed_queue.put((recipe.id, recipe_json))
+        if settings.inference_model:
+            _templatize_queue.put((recipe.id, recipe_json))
         return True
     except (NoSchemaFoundInWildMode, RecipeSchemaNotFound) as exc:
         log.warning("[%d] FAIL (no schema): %s", recipe.id, exc)
@@ -285,6 +290,80 @@ def _run_embed_worker() -> dict[str, int]:
     return counts
 
 
+def _run_templatize_worker() -> dict[str, int]:
+    """Drain _templatize_queue, templatizing each recipe as it arrives from process_one().
+
+    Exits when it receives the None sentinel (sent by run_workers() after all
+    scrape workers finish).
+    """
+    counts = {"templatized": 0, "failed": 0}
+    while True:
+        item = _templatize_queue.get()
+        if item is None:
+            break
+        recipe_id, recipe_json = item
+        ing_tmpl, instr_tmpl = templatize.templatize_recipe(recipe_json)
+        if ing_tmpl is not None or instr_tmpl is not None:
+            db.save_recipe_templates(recipe_id, ing_tmpl, instr_tmpl)
+            counts["templatized"] += 1
+            log.info("[templatize] %d OK: %s", recipe_id, recipe_json.get("title", ""))
+        else:
+            counts["failed"] += 1
+            log.warning("[templatize] %d FAIL", recipe_id)
+    return counts
+
+
+def run_templatize_backfill(job_id: int | None = None) -> dict[str, int]:
+    """Templatize all complete recipes that don't have templates yet.
+
+    Intended to be run as a background task from the API (e.g. after enabling
+    the inference model for the first time or changing it).
+    """
+    counts = {"processed": 0, "succeeded": 0, "failed": 0}
+    if job_id is not None:
+        db.start_job(job_id, message="Finding recipes to templatize")
+    try:
+        ids = db.get_untemplatized_ids()
+        if job_id is not None:
+            db.start_job(job_id, total=len(ids), message=f"Templatizing {len(ids)} recipe(s)")
+        log.info("[templatize backfill] %d recipe(s) to process", len(ids))
+        for recipe_id in ids:
+            recipe = db.get_recipe_by_id(recipe_id)
+            ok = False
+            if recipe and recipe.recipe_json:
+                ing_tmpl, instr_tmpl = templatize.templatize_recipe(recipe.recipe_json)
+                if ing_tmpl is not None or instr_tmpl is not None:
+                    db.save_recipe_templates(recipe_id, ing_tmpl, instr_tmpl)
+                    counts["succeeded"] += 1
+                    ok = True
+                    log.info("[templatize backfill] %d OK: %s", recipe_id, recipe.recipe_json.get("title", ""))
+                else:
+                    counts["failed"] += 1
+                    log.warning("[templatize backfill] %d FAIL", recipe_id)
+            else:
+                counts["failed"] += 1
+                log.warning("[templatize backfill] %d FAIL — no recipe_json", recipe_id)
+            counts["processed"] += 1
+            if job_id is not None:
+                db.update_job_progress(
+                    job_id,
+                    processed_delta=1,
+                    succeeded_delta=1 if ok else 0,
+                    failed_delta=0 if ok else 1,
+                )
+        message = "Templatize backfill complete"
+        if counts["failed"]:
+            message = f"Templatize backfill complete with {counts['failed']} failure(s)"
+        if job_id is not None:
+            db.finish_job(job_id, "succeeded", message)
+        log.info("[templatize backfill] done — succeeded=%d failed=%d", counts["succeeded"], counts["failed"])
+        return counts
+    except Exception as exc:
+        if job_id is not None:
+            db.finish_job(job_id, "failed", str(exc))
+        raise
+
+
 def run_workers(delay: float | None = None, job_id: int | None = None) -> dict[str, int]:
     """
     Spawn one worker thread per site that has pending work.
@@ -334,12 +413,16 @@ def run_workers(delay: float | None = None, job_id: int | None = None) -> dict[s
                     _active_sites.discard(site)
 
         embed_future: Future | None = None
+        templatize_future: Future | None = None
 
-        n_workers = len(sites_to_start) + (1 if settings.embed_model else 0)
+        n_workers = len(sites_to_start) + (1 if settings.embed_model else 0) + (1 if settings.inference_model else 0)
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             if settings.embed_model:
                 embed_future = executor.submit(_run_embed_worker)
                 log.info("Embed worker started")
+            if settings.inference_model:
+                templatize_future = executor.submit(_run_templatize_worker)
+                log.info("Templatize worker started")
 
             scrape_futures = [executor.submit(_run_and_release, site) for site in sites_to_start]
             for future in as_completed(scrape_futures):
@@ -354,11 +437,15 @@ def run_workers(delay: float | None = None, job_id: int | None = None) -> dict[s
                         failed_delta=result["failed"],
                     )
 
-            # All scrape workers done — send sentinel to stop the embed worker
+            # All scrape workers done — send sentinels to stop background workers
             if embed_future is not None:
                 _embed_queue.put(None)
                 embed_result = embed_future.result()
                 log.info("Embed worker done: embedded=%d failed=%d", embed_result["embedded"], embed_result["failed"])
+            if templatize_future is not None:
+                _templatize_queue.put(None)
+                templatize_result = templatize_future.result()
+                log.info("Templatize worker done: templatized=%d failed=%d", templatize_result["templatized"], templatize_result["failed"])
 
         if job_id is not None:
             db.finish_job(job_id, "succeeded", "Scrape complete")

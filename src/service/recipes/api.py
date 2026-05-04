@@ -40,6 +40,8 @@ class RecipeResponse(BaseModel):
     collections: list[str] = []
     has_thumbnail: bool = False
     has_image: bool = False
+    ingredients_template: list[str] | None = None
+    instructions_list_template: list[str] | None = None
 
 
 class FavoriteResponse(BaseModel):
@@ -178,6 +180,8 @@ def get_recipe(recipe_id: int) -> RecipeResponse:
         collections=db.get_recipe_collection_names(recipe.id),
         has_thumbnail=has_thumbnail,
         has_image=has_image,
+        ingredients_template=recipe.ingredients_template,
+        instructions_list_template=recipe.instructions_list_template,
     )
 
 
@@ -302,6 +306,15 @@ def start_embed_backfill(background_tasks: BackgroundTasks) -> StartJobResponse:
         raise HTTPException(status_code=400, detail="Embedding is not configured (RECIPES_EMBED_MODEL is not set)")
     job_id = db.create_job("embed_backfill", message="Queued embedding backfill")
     background_tasks.add_task(scraper.run_embed_backfill, job_id=job_id)
+    return StartJobResponse(status="started", job_id=job_id)
+
+
+@app.post("/templatize/backfill", response_model=StartJobResponse)
+def start_templatize_backfill(background_tasks: BackgroundTasks) -> StartJobResponse:
+    if not settings.inference_model:
+        raise HTTPException(status_code=400, detail="Inference is not configured (RECIPES_INFERENCE_MODEL is not set)")
+    job_id = db.create_job("templatize_backfill", message="Queued templatize backfill")
+    background_tasks.add_task(scraper.run_templatize_backfill, job_id=job_id)
     return StartJobResponse(status="started", job_id=job_id)
 
 

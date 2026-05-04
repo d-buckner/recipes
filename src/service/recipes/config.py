@@ -29,6 +29,19 @@ class Settings(BaseSettings):
         description="Seconds before an embedding API request times out. Set RECIPES_EMBED_TIMEOUT to override.",
     )
 
+    inference_url: str = Field(
+        default="http://localhost:11434",
+        description="Base URL of the inference API (OpenAI-compatible: POST /v1/chat/completions)",
+    )
+    inference_model: str = Field(
+        default="",
+        description="Chat model for recipe templatization, e.g. 'llama3.2'. Empty = disabled.",
+    )
+    inference_timeout: float = Field(
+        default=60.0,
+        description="Seconds before an inference API request times out.",
+    )
+
     @property
     def site_list(self) -> list[str]:
         return [s.strip() for s in self.sites.split(",") if s.strip()]

@@ -112,6 +112,14 @@ export async function reembedAll(): Promise<void> {
   }
 }
 
+export async function retemplatizeAll(): Promise<void> {
+  const res = await fetch(`${BASE}/templatize/backfill`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to start re-templatize' }))
+    throw new Error(err.detail ?? 'Failed to start re-templatize')
+  }
+}
+
 export async function listCollections(): Promise<Collection[]> {
   const res = await fetch(`${BASE}/collections`)
   if (!res.ok) throw new Error('Failed to fetch collections')

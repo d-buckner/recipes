@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { addFavorite, addRecipeToGroceryList, getRecipe, listCollections, removeFavorite, removeRecipeFromCollection } from '../api'
 import { CollectionPicker } from '../components/CollectionPicker'
 import type { Collection, RecipeDetail } from '../types'
-import { parseServings, scaleIngredient } from '../utils/scaleIngredient'
+import { parseServings, renderTemplate, scaleIngredient, scaleInstructionText } from '../utils/scaleIngredient'
 
 interface RecipePageParams extends Record<string, string | undefined> {
   id: string
@@ -247,13 +247,16 @@ export function RecipePage() {
             <div className="recipe-section">
               <h3>Ingredients</h3>
               <ul className="ingredients-list">
-                {rj.ingredients.map((ing, i) => (
-                  <li key={i}>
-                    {originalServings > 0 && servings !== originalServings
-                      ? scaleIngredient(ing, servings / originalServings)
-                      : ing}
-                  </li>
-                ))}
+                {rj.ingredients.map((ing, i) => {
+                  const tmpl = recipe?.ingredients_template?.[i]
+                  const factor = originalServings > 0 ? servings / originalServings : 1
+                  const text = tmpl
+                    ? renderTemplate(tmpl, factor)
+                    : originalServings > 0 && servings !== originalServings
+                      ? scaleIngredient(ing, factor)
+                      : ing
+                  return <li key={i}>{text}</li>
+                })}
               </ul>
             </div>
           )}
@@ -261,18 +264,27 @@ export function RecipePage() {
           {instructions.length > 0 && (
             <div className="recipe-section">
               <h3>Instructions</h3>
-              {instructions.length === 1 ? (
-                <p className="instructions-text">{instructions[0]}</p>
-              ) : (
-                <div className="instructions-steps">
-                  {instructions.map((step, i) => (
-                    <div key={i} className="step">
-                      <span className="step-num">{i + 1}</span>
-                      <p className="step-text">{step}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {(() => {
+                const factor = originalServings > 0 ? servings / originalServings : 1
+                const tmplList = recipe?.instructions_list_template
+                const renderStep = (step: string, i: number) => {
+                  if (tmplList?.[i]) return renderTemplate(tmplList[i], factor)
+                  if (originalServings > 0 && servings !== originalServings) return scaleInstructionText(step, factor)
+                  return step
+                }
+                return instructions.length === 1 ? (
+                  <p className="instructions-text">{renderStep(instructions[0], 0)}</p>
+                ) : (
+                  <div className="instructions-steps">
+                    {instructions.map((step, i) => (
+                      <div key={i} className="step">
+                        <span className="step-num">{i + 1}</span>
+                        <p className="step-text">{renderStep(step, i)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>

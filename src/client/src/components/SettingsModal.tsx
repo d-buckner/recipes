@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { deleteSite, discoverSite, getSites, reembedAll, rescrapeAll, startScrape } from '../api'
+import { deleteSite, discoverSite, getSites, reembedAll, retemplatizeAll, rescrapeAll, startScrape } from '../api'
 import { Modal } from './Modal'
 import type { ScrapeRunStats } from '../types'
 
@@ -11,6 +11,7 @@ interface SettingsModalProps {
 
 type RescrapeState = 'idle' | 'confirming' | 'started'
 type ReembedState = 'idle' | 'confirming' | 'started' | 'error'
+type RetemplatizeState = 'idle' | 'confirming' | 'started' | 'error'
 
 type SiteAction =
   | { type: 'idle' }
@@ -24,6 +25,8 @@ export function SettingsModal({ stats, onClose, onSiteDeleted }: SettingsModalPr
   const [queuedCount, setQueuedCount] = useState(0)
   const [reembedState, setReembedState] = useState<ReembedState>('idle')
   const [reembedError, setReembedError] = useState('')
+  const [retemplatizeState, setRetemplatizeState] = useState<RetemplatizeState>('idle')
+  const [retemplatizeError, setRetemplatizeError] = useState('')
   const [sites, setSites] = useState<string[] | null>(null)
   const [siteActions, setSiteActions] = useState<Map<string, SiteAction>>(new Map())
 
@@ -50,6 +53,20 @@ export function SettingsModal({ stats, onClose, onSiteDeleted }: SettingsModalPr
     } catch (err) {
       setReembedError(err instanceof Error ? err.message : 'Unknown error')
       setReembedState('error')
+    }
+  }
+
+  const handleRetemplatize = async () => {
+    if (retemplatizeState === 'idle' || retemplatizeState === 'error') {
+      setRetemplatizeState('confirming')
+      return
+    }
+    try {
+      await retemplatizeAll()
+      setRetemplatizeState('started')
+    } catch (err) {
+      setRetemplatizeError(err instanceof Error ? err.message : 'Unknown error')
+      setRetemplatizeState('error')
     }
   }
 
@@ -230,6 +247,35 @@ export function SettingsModal({ stats, onClose, onSiteDeleted }: SettingsModalPr
                 disabled={!stats || stats.complete === 0}
               >
                 Re-embed
+              </button>
+            )}
+          </div>
+          <div className="settings-action">
+            <div className="settings-action-info">
+              <p className="settings-action-label">Re-templatize all recipes</p>
+              <p className="settings-action-desc">
+                Uses AI to identify scalable quantities in ingredients and instructions for all {stats ? `${stats.complete.toLocaleString()} ` : ''}recipes. Requires RECIPES_INFERENCE_MODEL to be set.
+              </p>
+            </div>
+            {retemplatizeState === 'started' ? (
+              <span className="settings-action-done">✓ Running in background</span>
+            ) : retemplatizeState === 'error' ? (
+              <div className="settings-action-confirm">
+                <span className="settings-action-error">{retemplatizeError}</span>
+                <button className="btn ghost" onClick={() => setRetemplatizeState('idle')}>Dismiss</button>
+              </div>
+            ) : retemplatizeState === 'confirming' ? (
+              <div className="settings-action-confirm">
+                <button className="btn primary" onClick={handleRetemplatize}>Confirm</button>
+                <button className="btn ghost" onClick={() => setRetemplatizeState('idle')}>Cancel</button>
+              </div>
+            ) : (
+              <button
+                className="btn ghost"
+                onClick={handleRetemplatize}
+                disabled={!stats || stats.complete === 0}
+              >
+                Re-templatize
               </button>
             )}
           </div>

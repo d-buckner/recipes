@@ -23,6 +23,8 @@ class RecipeRow:
     claimed_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    ingredients_template: list[str] | None = None
+    instructions_list_template: list[str] | None = None
 
 
 @dataclass

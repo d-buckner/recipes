@@ -64,6 +64,8 @@ export interface RecipeDetail {
   collections: string[]
   has_thumbnail: boolean
   has_image: boolean
+  ingredients_template: string[] | null
+  instructions_list_template: string[] | null
 }
 
 export interface GroceryListItem {

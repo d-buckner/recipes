@@ -179,6 +179,8 @@ _MIGRATIONS = [
     "ALTER TABLE recipes ADD COLUMN category_json TEXT",
     "CREATE INDEX IF NOT EXISTS idx_recipes_total_time ON recipes(total_time)",
     "CREATE INDEX IF NOT EXISTS idx_recipes_author ON recipes(author)",
+    "ALTER TABLE recipes ADD COLUMN ingredients_template TEXT",
+    "ALTER TABLE recipes ADD COLUMN instructions_list_template TEXT",
 ]
 
 
@@ -511,7 +513,8 @@ def claim_next_url(claim_timeout: int = 300, site: str | None = None) -> RecipeR
                 ORDER BY created_at ASC LIMIT 1
             )
             RETURNING id, url, site, status, recipe_json, error_msg,
-                      retry_count, claimed_at, created_at, updated_at
+                      retry_count, claimed_at, created_at, updated_at,
+                      ingredients_template, instructions_list_template
             """,
             (f"-{claim_timeout}", *site_params),
         ).fetchone()
@@ -569,6 +572,44 @@ def save_recipe(recipe_id: int, recipe_json: dict, thumbnail: bytes | None = Non
             "INSERT OR REPLACE INTO recipe_fts (id, title, description, ingredients, keywords) VALUES (?, ?, ?, ?, ?)",
             (recipe_id, title or "", description, ingredients, keywords),
         )
+
+
+def save_recipe_templates(
+    recipe_id: int,
+    ingredients_template: list[str] | None,
+    instructions_list_template: list[str] | None,
+) -> None:
+    """Persist AI-generated {qty:N} templates for a recipe."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE recipes
+            SET ingredients_template = ?,
+                instructions_list_template = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                json.dumps(ingredients_template) if ingredients_template is not None else None,
+                json.dumps(instructions_list_template) if instructions_list_template is not None else None,
+                recipe_id,
+            ),
+        )
+
+
+def get_untemplatized_ids() -> list[int]:
+    """Return IDs of complete recipes that have no ingredients template yet."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id FROM recipes
+            WHERE status = 'complete'
+              AND recipe_json IS NOT NULL
+              AND ingredients_template IS NULL
+            ORDER BY id
+            """
+        ).fetchall()
+        return [row["id"] for row in rows]
 
 
 def get_thumbnail(recipe_id: int) -> bytes | None:
@@ -698,7 +739,7 @@ def get_recipe_collection_names(recipe_id: int) -> list[str]:
 def get_recipe_by_id(recipe_id: int) -> RecipeRow | None:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, url, site, status, recipe_json, error_msg, retry_count, claimed_at, created_at, updated_at FROM recipes WHERE id = ?",
+            "SELECT id, url, site, status, recipe_json, error_msg, retry_count, claimed_at, created_at, updated_at, ingredients_template, instructions_list_template FROM recipes WHERE id = ?",
             (recipe_id,),
         ).fetchone()
         if row is None:
@@ -1319,6 +1360,8 @@ def _normalise_list_field(value: object) -> list[str]:
 
 def _row_to_recipe(row: sqlite3.Row) -> RecipeRow:
     recipe_json = json.loads(row["recipe_json"]) if row["recipe_json"] else None
+    ingredients_template = json.loads(row["ingredients_template"]) if row["ingredients_template"] else None
+    instructions_list_template = json.loads(row["instructions_list_template"]) if row["instructions_list_template"] else None
     return RecipeRow(
         id=row["id"],
         url=row["url"],
@@ -1330,6 +1373,8 @@ def _row_to_recipe(row: sqlite3.Row) -> RecipeRow:
         claimed_at=row["claimed_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        ingredients_template=ingredients_template,
+        instructions_list_template=instructions_list_template,
     )
 
 

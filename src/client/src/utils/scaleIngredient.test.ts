@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseServings, scaleIngredient } from './scaleIngredient'
+import { parseServings, scaleIngredient, scaleInstructionText } from './scaleIngredient'
 
 // ---------------------------------------------------------------------------
 // scaleIngredient — mirrors the Python _scale_ingredient behaviour
@@ -83,6 +83,63 @@ describe('scaleIngredient', () => {
 
   it('scales plain count without unit', () => {
     expect(scaleIngredient('4 eggs', 3)).toBe('12 eggs')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// scaleInstructionText — scale quantities embedded in instruction prose
+// ---------------------------------------------------------------------------
+
+describe('scaleInstructionText', () => {
+  it('scales an integer quantity in a sentence', () => {
+    expect(scaleInstructionText('Add 2 cups of flour.', 2)).toBe('Add 4 cups of flour.')
+  })
+
+  it('scales multiple quantities in one step', () => {
+    expect(scaleInstructionText('Mix 2 cups flour with 1 teaspoon salt.', 2)).toBe(
+      'Mix 4 cups flour with 2 teaspoon salt.',
+    )
+  })
+
+  it('does not scale temperatures', () => {
+    expect(scaleInstructionText('Preheat oven to 350°F.', 2)).toBe('Preheat oven to 350°F.')
+  })
+
+  it('does not scale time durations', () => {
+    expect(scaleInstructionText('Bake for 30 minutes.', 2)).toBe('Bake for 30 minutes.')
+    expect(scaleInstructionText('Rest for 1 hour.', 2)).toBe('Rest for 1 hour.')
+  })
+
+  it('scales unicode fractions embedded in text', () => {
+    expect(scaleInstructionText('Stir in ½ cup sugar.', 2)).toBe('Stir in 1 cup sugar.')
+  })
+
+  it('scales mixed numbers embedded in text', () => {
+    expect(scaleInstructionText('Pour in 1½ cups broth.', 2)).toBe('Pour in 3 cups broth.')
+  })
+
+  it('scales space-separated mixed numbers', () => {
+    expect(scaleInstructionText('Add 1 1/2 cups water.', 2)).toBe('Add 3 cups water.')
+  })
+
+  it('scales ASCII fractions embedded in text', () => {
+    expect(scaleInstructionText('Add 1/2 cup cream.', 2)).toBe('Add 1 cup cream.')
+  })
+
+  it('returns unchanged text when factor is 1', () => {
+    expect(scaleInstructionText('Add 2 cups flour.', 1)).toBe('Add 2 cups flour.')
+  })
+
+  it('passes through text with no quantities unchanged', () => {
+    expect(scaleInstructionText('Season with salt to taste.', 2)).toBe(
+      'Season with salt to taste.',
+    )
+  })
+
+  it('scales quantities but leaves temperatures and times alone', () => {
+    expect(scaleInstructionText('Bake 2 pans at 375°F for 20 minutes.', 2)).toBe(
+      'Bake 4 pans at 375°F for 20 minutes.',
+    )
   })
 })
 

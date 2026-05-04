@@ -191,6 +191,60 @@ export function parseServings(yields: string | null | undefined): number {
   return 1
 }
 
+/**
+ * Render an AI-generated template string by replacing {qty:N} placeholders
+ * with scaled, formatted quantities.
+ *
+ * At factor 1 the placeholders are replaced with their original values so the
+ * output reads as normal text even without scaling.
+ */
+export function renderTemplate(template: string, factor: number): string {
+  return template.replace(/\{qty:([\d.]+)\}/g, (_, n) => scaleIngredient(n, factor))
+}
+
+/**
+ * Scale all numeric quantities in an instruction text string by *factor*.
+ *
+ * Handles the same quantity formats as scaleIngredient (unicode fractions,
+ * ASCII fractions, mixed numbers, decimals, integers).  Numbers that are
+ * part of temperatures (followed by °) or time durations (followed by
+ * minutes/hours/seconds) are left unchanged.
+ */
+export function scaleInstructionText(text: string, factor: number): string {
+  if (factor === 1) return text
+
+  // Normalize digit + unicode-fraction adjacencies: "1½" → "1 ½"
+  let normalized = text
+  for (const glyph of Object.keys(UNICODE_FRACTIONS)) {
+    normalized = normalized.replace(
+      new RegExp(`(\\d)(${escapeRegExp(glyph)})`, 'g'),
+      '$1 $2',
+    )
+  }
+
+  const glyphPat = Object.keys(UNICODE_FRACTIONS).map(escapeRegExp).join('|')
+
+  // Order matters: most specific patterns first to avoid partial matches
+  const pattern = [
+    `\\d+\\s+(?:${glyphPat}|\\d+/\\d+)`, // mixed number: integer + fraction/glyph
+    `\\d+\\.\\d+`,                         // decimal
+    glyphPat,                              // standalone unicode glyph
+    `\\d+/\\d+`,                           // ASCII fraction
+    `\\d+`,                                // integer
+  ].join('|')
+
+  const re = new RegExp(pattern, 'g')
+
+  return normalized.replace(re, (match, offset) => {
+    const afterMatch = normalized.slice(offset + match.length)
+    // Skip temperatures (e.g. 350°F)
+    if (/^\s*°/.test(afterMatch)) return match
+    // Skip time durations (e.g. 30 minutes, 2 hours)
+    if (/^\s*(?:minutes?|hours?|seconds?|mins?|hrs?)(?:\s|$|[,.])/i.test(afterMatch)) return match
+    return scaleIngredient(match, factor)
+  })
+}
+
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
