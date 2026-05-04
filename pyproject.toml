@@ -33,7 +33,7 @@ dev = [
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/recipes"]
+packages = ["src/service/recipes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

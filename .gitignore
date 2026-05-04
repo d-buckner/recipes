@@ -6,7 +6,7 @@ node_modules/
 __pycache__/
 *.pyc
 *.db
-ui/dist/
+src/client/dist/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

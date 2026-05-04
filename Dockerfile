@@ -1,9 +1,9 @@
 # ── Stage 1: Build the frontend ──────────────────────────────────────────────
 FROM node:22-slim AS frontend
 WORKDIR /ui
-COPY ui/package.json ui/package-lock.json ./
+COPY src/client/package.json src/client/package-lock.json ./
 RUN npm ci
-COPY ui/ ./
+COPY src/client/ ./
 RUN npm run build
 
 # ── Stage 2: Python application ───────────────────────────────────────────────
@@ -16,7 +16,7 @@ RUN useradd --system --no-create-home --shell /usr/sbin/nologin recipes
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
-COPY src/ ./src/
+COPY src/service/ ./src/service/
 
 RUN pip install --no-cache-dir .
 
