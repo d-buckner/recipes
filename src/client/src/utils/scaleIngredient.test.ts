@@ -143,20 +143,37 @@ describe('renderTemplate', () => {
     expect(renderTemplate('{qty:2} tbsp butter', 1)).toBe('2 tbsp butter')
   })
 
-  // unit conversion: tablespoon → teaspoon
-  it('converts tablespoon to teaspoon when result < ½ tbsp', () => {
-    // 1 tbsp × 0.25 = 0.25 tbsp → convert: 0.25×3 = 0.75 tsp → ¾ tsp
+  // unit conversion: tablespoon → teaspoon (scale down)
+  it('converts tablespoon to teaspoon when result is < 1 tbsp', () => {
+    // 1 tbsp × 0.25 = 0.25 tbsp = 0.75 tsp → ¾ tsp
     expect(renderTemplate('{qty:1} tablespoon oil', 0.25)).toBe('¾ teaspoon oil')
   })
 
-  it('converts tbsp to tsp when result < ½ tbsp', () => {
+  it('converts tbsp to tsp (abbreviation preserved)', () => {
     expect(renderTemplate('{qty:1} tbsp oil', 0.25)).toBe('¾ tsp oil')
   })
 
-  // unit conversion: cup → tablespoon
-  it('converts cup to tablespoon when result < ⅛ cup', () => {
-    // 1 cup × 0.0625 = 0.0625 cup → convert: 0.0625×16 = 1 tablespoon
+  // unit conversion: cup → tablespoon (scale down)
+  it('converts cup to tablespoon when result is < ¼ cup', () => {
+    // 1 cup × 0.0625 = 0.0625 cup = 3 tsp = 1 tablespoon
     expect(renderTemplate('{qty:1} cup cream', 0.0625)).toBe('1 tablespoon cream')
+  })
+
+  // unit conversion: teaspoon → tablespoon (scale up)
+  it('converts teaspoon to tablespoon when result is >= 1 tbsp', () => {
+    // 1 tsp × 6 = 6 tsp = 2 tablespoons
+    expect(renderTemplate('{qty:1} teaspoon salt', 6)).toBe('2 tablespoons salt')
+  })
+
+  it('converts tsp to tbsp (abbreviation preserved)', () => {
+    // 1 tsp × 3 = 3 tsp = 1 tbsp
+    expect(renderTemplate('{qty:1} tsp salt', 3)).toBe('1 tbsp salt')
+  })
+
+  // unit conversion: tablespoon → cup (scale up)
+  it('converts tablespoon to cup when result is >= ¼ cup', () => {
+    // 1 tbsp × 4 = 4 tbsp = 12 tsp = ¼ cup
+    expect(renderTemplate('{qty:1} tablespoon oil', 4)).toBe('¼ cup oil')
   })
 
   // no unit: just snap and format

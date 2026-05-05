@@ -214,70 +214,68 @@ function roundToCookingFraction(value: number): Frac {
 }
 
 // ---------------------------------------------------------------------------
-// Unit conversion for renderTemplate
+// Volume unit ladder for bi-directional conversion
 // ---------------------------------------------------------------------------
 
-interface ConvertibleUnit {
+interface VolumeUnit {
+  /** Regex matching all spellings of this unit. */
+  pattern: RegExp
   singular: string
   plural: string
-  /** Whether to correct singular/plural when keeping this unit. False for abbreviations. */
-  applyPluralization: boolean
-  matchPattern: RegExp
-  smallerFactor: number | null
-  smallerSingular: string | null
-  convertBelow: number
+  /** Standard cooking abbreviation, or null if none commonly used. */
+  abbrev: string | null
+  /** How many teaspoons one of this unit contains. */
+  tsp: number
+  /** Prefer this unit when the value in teaspoons is >= this threshold. */
+  preferAboveTsp: number
 }
 
-const CONVERTIBLE_UNITS: ConvertibleUnit[] = [
+// Ordered smallest → largest. The ladder is used to convert both up and down.
+const VOLUME_UNITS: VolumeUnit[] = [
   {
-    matchPattern: /^cups?$/i,
-    singular: 'cup', plural: 'cups', applyPluralization: true,
-    smallerFactor: 16, smallerSingular: 'tablespoon', convertBelow: 0.125,
+    pattern: /^tsps?$|^teaspoons?$/i,
+    singular: 'teaspoon', plural: 'teaspoons', abbrev: 'tsp',
+    tsp: 1, preferAboveTsp: 0,
   },
   {
-    matchPattern: /^tablespoons?$/i,
-    singular: 'tablespoon', plural: 'tablespoons', applyPluralization: true,
-    smallerFactor: 3, smallerSingular: 'teaspoon', convertBelow: 0.5,
+    pattern: /^tbsps?$|^tablespoons?$/i,
+    singular: 'tablespoon', plural: 'tablespoons', abbrev: 'tbsp',
+    tsp: 3, preferAboveTsp: 3,      // ≥ 1 tablespoon
   },
   {
-    matchPattern: /^tbsp$/i,
-    singular: 'tbsp', plural: 'tbsp', applyPluralization: false,
-    smallerFactor: 3, smallerSingular: 'tsp', convertBelow: 0.5,
-  },
-  {
-    matchPattern: /^teaspoons?$/i,
-    singular: 'teaspoon', plural: 'teaspoons', applyPluralization: true,
-    smallerFactor: null, smallerSingular: null, convertBelow: 0,
-  },
-  {
-    matchPattern: /^tsp$/i,
-    singular: 'tsp', plural: 'tsp', applyPluralization: false,
-    smallerFactor: null, smallerSingular: null, convertBelow: 0,
+    pattern: /^cups?$/i,
+    singular: 'cup', plural: 'cups', abbrev: null,
+    tsp: 48, preferAboveTsp: 12,    // ≥ ¼ cup
   },
 ]
 
 /**
- * Scale a value and convert to a smaller unit when the result would be
- * impractically small (e.g. 1/3 tablespoon → 1 teaspoon).
+ * Scale a value and convert to the most appropriate unit in the volume ladder.
+ * Handles both scale-up (tsp → tbsp → cup) and scale-down (cup → tbsp → tsp).
+ * Preserves abbreviation style when possible (tsp stays tsp, tbsp stays tbsp).
  * Returns null for unknown units.
  */
 function scaleWithUnitConversion(
   scaledValue: number,
   unitWord: string,
 ): { qty: Frac; unit: string } | null {
-  const unitDef = CONVERTIBLE_UNITS.find(u => u.matchPattern.test(unitWord))
-  if (!unitDef) return null
+  const srcUnit = VOLUME_UNITS.find(u => u.pattern.test(unitWord))
+  if (!srcUnit) return null
 
-  const qty = roundToCookingFraction(scaledValue)
+  const valueTsp = scaledValue * srcUnit.tsp
+  const isAbbreviated = srcUnit.abbrev !== null &&
+    unitWord.toLowerCase() === srcUnit.abbrev.toLowerCase()
 
-  // Convert when below the threshold or when rounding would give zero
-  if (unitDef.smallerFactor !== null && (scaledValue < unitDef.convertBelow || qty.n === 0)) {
-    return scaleWithUnitConversion(scaledValue * unitDef.smallerFactor, unitDef.smallerSingular!)
-  }
+  // Walk from largest to smallest; first unit whose threshold fits wins
+  const target = [...VOLUME_UNITS].reverse().find(u => valueTsp >= u.preferAboveTsp)
+    ?? VOLUME_UNITS[0]
 
-  const unit = unitDef.applyPluralization
-    ? (qty.n <= qty.d ? unitDef.singular : unitDef.plural)
-    : unitWord  // preserve abbreviation style (tsp, tbsp) unchanged
+  const qty = roundToCookingFraction(valueTsp / target.tsp)
+
+  // Follow original style: abbreviated input → abbreviated output (when available)
+  const unit = isAbbreviated && target.abbrev !== null
+    ? target.abbrev
+    : (qty.n <= qty.d ? target.singular : target.plural)
 
   return { qty, unit }
 }
