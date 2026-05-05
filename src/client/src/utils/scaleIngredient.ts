@@ -343,6 +343,8 @@ export function scaleInstructionText(text: string, factor: number): string {
     if (/^\s*°/.test(afterMatch)) return match
     // Skip time durations (e.g. 30 minutes, 2 hours)
     if (/^\s*(?:minutes?|hours?|seconds?|mins?|hrs?)(?:\s|$|[,.])/i.test(afterMatch)) return match
+    // Skip relational fractions (e.g. "¼ of the meringue", "½ of the batter")
+    if (/^\s+of\s+/i.test(afterMatch)) return match
     return scaleIngredient(match, factor)
   })
 }

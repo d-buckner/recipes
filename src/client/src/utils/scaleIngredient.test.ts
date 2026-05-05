@@ -232,6 +232,15 @@ describe('scaleInstructionText', () => {
     )
   })
 
+  it('does not scale relational fractions (proportion of another ingredient)', () => {
+    expect(scaleInstructionText('Add ¼ of the meringue to the chocolate mixture.', 2)).toBe(
+      'Add ¼ of the meringue to the chocolate mixture.',
+    )
+    expect(scaleInstructionText('Fold in 1/3 of the batter.', 2)).toBe(
+      'Fold in 1/3 of the batter.',
+    )
+  })
+
   it('scales quantities but leaves temperatures and times alone', () => {
     expect(scaleInstructionText('Bake 2 pans at 375°F for 20 minutes.', 2)).toBe(
       'Bake 4 pans at 375°F for 20 minutes.',

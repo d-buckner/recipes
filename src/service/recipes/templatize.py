@@ -38,18 +38,22 @@ NEVER mark these — they do not scale with servings:
 - Temperatures: "350°F", "180°C"
 - Pan or dish sizes: "9-inch pan", "8x8 dish"
 - Percentages, step numbers, or any other non-ingredient number
+- Relational fractions — fractions that describe a proportion of another ingredient \
+already in the recipe, not an absolute quantity: "add ¼ of the meringue", \
+"fold in ⅓ of the batter", "reserve half of the sauce". These are always proportional \
+and must never be marked.
 
 Return valid JSON with the exact same structure and array lengths as the input. \
 No explanation — only the JSON object.
 
 Example input:
 {"ingredients": ["2 cups flour", "1/2 tsp salt", "1 egg"], \
-"instructions": ["Mix 2 cups flour with 500ml water.", "Bake at 350°F for 30 minutes.", \
-"Divide into 12 equal pieces."]}
+"instructions": ["Mix {qty:2} cups flour with ½ of the egg mixture.", \
+"Bake at 350°F for 30 minutes.", "Divide into 12 equal pieces."]}
 
 Example output:
 {"ingredients": ["{qty:2} cups flour", "{qty:0.5} tsp salt", "{qty:1} egg"], \
-"instructions": ["Mix {qty:2} cups flour with {qty:500}ml water.", \
+"instructions": ["Mix {qty:2} cups flour with ½ of the egg mixture.", \
 "Bake at 350°F for 30 minutes.", "Divide into {qty:12} equal pieces."]}
 """
 
