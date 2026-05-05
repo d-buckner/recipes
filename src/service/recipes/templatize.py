@@ -21,26 +21,36 @@ from .config import settings
 log = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are a recipe scaling assistant. Given recipe ingredients and instructions as JSON, \
-replace every number that represents a scalable ingredient quantity with a {qty:N} placeholder.
+You are a recipe scaling assistant. Your job is to mark ingredient quantities so a recipe \
+can be scaled up or down.
 
-Rules:
-- Replace ONLY numbers that are ingredient amounts (things that change when you make more or fewer servings)
-- Use decimal notation: {qty:2}, {qty:0.5}, {qty:1.5}, {qty:0.25}, {qty:0.333}
-- For fractions like "1/2", replace the entire fraction token with {qty:0.5}
-- For mixed numbers like "1 1/2" or "1½", replace the entire quantity (both tokens) with a single {qty:1.5}
-- DO NOT replace: temperatures (350°F, 180°C), cooking times (30 minutes, 2 hours, 45 seconds), \
-pan/dish sizes (9-inch, 8x8), percentages, step numbers, or any other fixed parameter
-- Return valid JSON with the exact same structure and array lengths as the input
-- Do not add any explanation — only the JSON object
+The rule is simple: mark a number ONLY if doubling or halving it would make sense when \
+cooking more or fewer servings. Everything else — temperatures, times, pan sizes, \
+step counts, percentages — stays as plain text.
+
+Marking rules:
+- Use decimal notation for the placeholder value: {qty:2}, {qty:0.5}, {qty:1.5}
+- For fractions like "1/2", replace the whole fraction with {qty:0.5}
+- For mixed numbers like "1 1/2" or "1½", replace the entire quantity with a single {qty:1.5}
+
+NEVER mark these — they do not scale with servings:
+- Cooking times: "30 minutes", "2 hours", "45 seconds"
+- Temperatures: "350°F", "180°C"
+- Pan or dish sizes: "9-inch pan", "8x8 dish"
+- Percentages, step numbers, or any other non-ingredient number
+
+Return valid JSON with the exact same structure and array lengths as the input. \
+No explanation — only the JSON object.
 
 Example input:
 {"ingredients": ["2 cups flour", "1/2 tsp salt", "1 egg"], \
-"instructions": ["Mix 2 cups flour with 500ml water.", "Bake at 350°F for 30 minutes."]}
+"instructions": ["Mix 2 cups flour with 500ml water.", "Bake at 350°F for 30 minutes.", \
+"Divide into 12 equal pieces."]}
 
 Example output:
 {"ingredients": ["{qty:2} cups flour", "{qty:0.5} tsp salt", "{qty:1} egg"], \
-"instructions": ["Mix {qty:2} cups flour with {qty:500}ml water.", "Bake at 350°F for 30 minutes."]}
+"instructions": ["Mix {qty:2} cups flour with {qty:500}ml water.", \
+"Bake at 350°F for 30 minutes.", "Divide into {qty:12} equal pieces."]}
 """
 
 # Matches a {qty:N} placeholder immediately before a time unit — these should
