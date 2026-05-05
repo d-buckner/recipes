@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseServings, scaleIngredient, scaleInstructionText } from './scaleIngredient'
+import { parseServings, renderTemplate, scaleIngredient, scaleInstructionText } from './scaleIngredient'
 
 // ---------------------------------------------------------------------------
 // scaleIngredient — mirrors the Python _scale_ingredient behaviour
@@ -83,6 +83,42 @@ describe('scaleIngredient', () => {
 
   it('scales plain count without unit', () => {
     expect(scaleIngredient('4 eggs', 3)).toBe('12 eggs')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// renderTemplate — render {qty:N} placeholders with cooking-fraction snapping
+// ---------------------------------------------------------------------------
+
+describe('renderTemplate', () => {
+  it('renders whole numbers', () => {
+    expect(renderTemplate('{qty:2} cups flour', 1)).toBe('2 cups flour')
+  })
+
+  it('snaps 0.333 to ⅓', () => {
+    expect(renderTemplate('{qty:0.333} cup sugar', 1)).toBe('⅓ cup sugar')
+  })
+
+  it('snaps 0.667 to ⅔', () => {
+    expect(renderTemplate('{qty:0.667} cup sugar', 1)).toBe('⅔ cup sugar')
+  })
+
+  it('snaps 0.5 to ½', () => {
+    expect(renderTemplate('{qty:0.5} tsp salt', 1)).toBe('½ tsp salt')
+  })
+
+  it('scales and formats cleanly: 0.333 × 3 = 1', () => {
+    expect(renderTemplate('{qty:0.333} cup', 3)).toBe('1 cup')
+  })
+
+  it('scales a whole number', () => {
+    expect(renderTemplate('{qty:2} cups flour', 2)).toBe('4 cups flour')
+  })
+
+  it('renders multiple placeholders in one string', () => {
+    expect(renderTemplate('Mix {qty:2} cups flour with {qty:0.5} tsp salt', 2)).toBe(
+      'Mix 4 cups flour with 1 tsp salt',
+    )
   })
 })
 

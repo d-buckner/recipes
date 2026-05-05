@@ -191,15 +191,41 @@ export function parseServings(yields: string | null | undefined): number {
   return 1
 }
 
+// Denominators used in cooking measurements, in preference order.
+// Snapping to these avoids ugly outputs like "341/500" from AI-stored decimals.
+const COOKING_DENOMINATORS = [1, 2, 3, 4, 6, 8]
+
+/**
+ * Round a decimal value to the nearest cooking fraction (halves, thirds,
+ * quarters, sixths, eighths).  Prefers simpler denominators when tied.
+ */
+function roundToCookingFraction(value: number): Frac {
+  let best: Frac = frac(Math.round(value), 1)
+  let bestError = Math.abs(value - Math.round(value))
+  for (const d of COOKING_DENOMINATORS) {
+    const n = Math.round(value * d)
+    const error = Math.abs(value - n / d)
+    if (error < bestError - 1e-9) {
+      bestError = error
+      best = frac(n, d)
+    }
+  }
+  return best
+}
+
 /**
  * Render an AI-generated template string by replacing {qty:N} placeholders
  * with scaled, formatted quantities.
  *
- * At factor 1 the placeholders are replaced with their original values so the
- * output reads as normal text even without scaling.
+ * Decimals stored by the AI (e.g. 0.333 for ⅓) are snapped to the nearest
+ * cooking fraction before scaling so the output is always human-readable.
  */
 export function renderTemplate(template: string, factor: number): string {
-  return template.replace(/\{qty:([\d.]+)\}/g, (_, n) => scaleIngredient(n, factor))
+  const factorFrac = frac(Math.round(factor * 1000), 1000)
+  return template.replace(/\{qty:([\d.]+)\}/g, (_, n) => {
+    const qty = roundToCookingFraction(parseFloat(n))
+    return formatFraction(fracMul(qty, factorFrac))
+  })
 }
 
 /**
