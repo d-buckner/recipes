@@ -213,18 +213,96 @@ function roundToCookingFraction(value: number): Frac {
   return best
 }
 
+// ---------------------------------------------------------------------------
+// Unit conversion for renderTemplate
+// ---------------------------------------------------------------------------
+
+interface ConvertibleUnit {
+  singular: string
+  plural: string
+  /** Whether to correct singular/plural when keeping this unit. False for abbreviations. */
+  applyPluralization: boolean
+  matchPattern: RegExp
+  smallerFactor: number | null
+  smallerSingular: string | null
+  convertBelow: number
+}
+
+const CONVERTIBLE_UNITS: ConvertibleUnit[] = [
+  {
+    matchPattern: /^cups?$/i,
+    singular: 'cup', plural: 'cups', applyPluralization: true,
+    smallerFactor: 16, smallerSingular: 'tablespoon', convertBelow: 0.125,
+  },
+  {
+    matchPattern: /^tablespoons?$/i,
+    singular: 'tablespoon', plural: 'tablespoons', applyPluralization: true,
+    smallerFactor: 3, smallerSingular: 'teaspoon', convertBelow: 0.5,
+  },
+  {
+    matchPattern: /^tbsp$/i,
+    singular: 'tbsp', plural: 'tbsp', applyPluralization: false,
+    smallerFactor: 3, smallerSingular: 'tsp', convertBelow: 0.5,
+  },
+  {
+    matchPattern: /^teaspoons?$/i,
+    singular: 'teaspoon', plural: 'teaspoons', applyPluralization: true,
+    smallerFactor: null, smallerSingular: null, convertBelow: 0,
+  },
+  {
+    matchPattern: /^tsp$/i,
+    singular: 'tsp', plural: 'tsp', applyPluralization: false,
+    smallerFactor: null, smallerSingular: null, convertBelow: 0,
+  },
+]
+
+/**
+ * Scale a value and convert to a smaller unit when the result would be
+ * impractically small (e.g. 1/3 tablespoon → 1 teaspoon).
+ * Returns null for unknown units.
+ */
+function scaleWithUnitConversion(
+  scaledValue: number,
+  unitWord: string,
+): { qty: Frac; unit: string } | null {
+  const unitDef = CONVERTIBLE_UNITS.find(u => u.matchPattern.test(unitWord))
+  if (!unitDef) return null
+
+  const qty = roundToCookingFraction(scaledValue)
+
+  // Convert when below the threshold or when rounding would give zero
+  if (unitDef.smallerFactor !== null && (scaledValue < unitDef.convertBelow || qty.n === 0)) {
+    return scaleWithUnitConversion(scaledValue * unitDef.smallerFactor, unitDef.smallerSingular!)
+  }
+
+  const unit = unitDef.applyPluralization
+    ? (qty.n <= qty.d ? unitDef.singular : unitDef.plural)
+    : unitWord  // preserve abbreviation style (tsp, tbsp) unchanged
+
+  return { qty, unit }
+}
+
 /**
  * Render an AI-generated template string by replacing {qty:N} placeholders
  * with scaled, formatted quantities.
  *
  * Decimals stored by the AI (e.g. 0.333 for ⅓) are snapped to the nearest
- * cooking fraction before scaling so the output is always human-readable.
+ * cooking fraction.  Known volume units (cup, tablespoon, teaspoon and their
+ * abbreviations) are converted to a smaller unit when the scaled quantity
+ * would be impractically small, and singular/plural is corrected automatically.
  */
 export function renderTemplate(template: string, factor: number): string {
-  const factorFrac = frac(Math.round(factor * 1000), 1000)
-  return template.replace(/\{qty:([\d.]+)\}/g, (_, n) => {
-    const qty = roundToCookingFraction(parseFloat(n))
-    return formatFraction(fracMul(qty, factorFrac))
+  return template.replace(/\{qty:([\d.]+)\}(\s*)([A-Za-z]+)?/g, (_, n, space, unitWord) => {
+    const scaledValue = parseFloat(n) * factor
+
+    if (unitWord) {
+      const result = scaleWithUnitConversion(scaledValue, unitWord)
+      if (result) return formatFraction(result.qty) + space + result.unit
+    }
+
+    // Unknown unit or no unit — just snap and format
+    const qty = roundToCookingFraction(scaledValue)
+    return unitWord ? formatFraction(qty) + space + unitWord : formatFraction(qty)
   })
 }
 

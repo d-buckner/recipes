@@ -120,6 +120,49 @@ describe('renderTemplate', () => {
       'Mix 4 cups flour with 1 tsp salt',
     )
   })
+
+  // singular / plural correction
+  it('uses singular for 1 cup', () => {
+    expect(renderTemplate('{qty:2} cups flour', 0.5)).toBe('1 cup flour')
+  })
+
+  it('uses plural for 2 cups', () => {
+    expect(renderTemplate('{qty:1} cup flour', 2)).toBe('2 cups flour')
+  })
+
+  it('uses singular for ½ cup (≤1)', () => {
+    expect(renderTemplate('{qty:1} cup flour', 0.5)).toBe('½ cup flour')
+  })
+
+  // abbreviations are preserved unchanged (no pluralization)
+  it('preserves tsp abbreviation', () => {
+    expect(renderTemplate('{qty:0.5} tsp salt', 2)).toBe('1 tsp salt')
+  })
+
+  it('preserves tbsp abbreviation', () => {
+    expect(renderTemplate('{qty:2} tbsp butter', 1)).toBe('2 tbsp butter')
+  })
+
+  // unit conversion: tablespoon → teaspoon
+  it('converts tablespoon to teaspoon when result < ½ tbsp', () => {
+    // 1 tbsp × 0.25 = 0.25 tbsp → convert: 0.25×3 = 0.75 tsp → ¾ tsp
+    expect(renderTemplate('{qty:1} tablespoon oil', 0.25)).toBe('¾ teaspoon oil')
+  })
+
+  it('converts tbsp to tsp when result < ½ tbsp', () => {
+    expect(renderTemplate('{qty:1} tbsp oil', 0.25)).toBe('¾ tsp oil')
+  })
+
+  // unit conversion: cup → tablespoon
+  it('converts cup to tablespoon when result < ⅛ cup', () => {
+    // 1 cup × 0.0625 = 0.0625 cup → convert: 0.0625×16 = 1 tablespoon
+    expect(renderTemplate('{qty:1} cup cream', 0.0625)).toBe('1 tablespoon cream')
+  })
+
+  // no unit: just snap and format
+  it('formats with no unit', () => {
+    expect(renderTemplate('{qty:3} eggs', 0.333)).toBe('1 eggs')
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
         description="Chat model for recipe templatization, e.g. 'llama3.2'. Empty = disabled.",
     )
     inference_timeout: float = Field(
-        default=60.0,
+        default=120.0,
         description="Seconds before an inference API request times out.",
     )
 
