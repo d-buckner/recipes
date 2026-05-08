@@ -53,7 +53,7 @@ export function HomePage() {
   const isList = useMatch('/list')
   const tab: Tab = isFavorites ? 'favorites' : isCollections ? 'collections' : isList ? 'list' : 'explore'
 
-  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
+  const query = searchParams.get('q') ?? ''
   const [recipes, setRecipes] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -81,22 +81,14 @@ export function HomePage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Keep ?q= in sync with the query input (explore tab only)
-  useEffect(() => {
-    if (tab !== 'explore') return
+  const handleQueryChange = (value: string) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
-      if (query) next.set('q', query)
+      if (value) next.set('q', value)
       else next.delete('q')
       return next
     }, { replace: true })
-  }, [query, tab])
-
-  // Sync URL query param back to local state for browser back/forward navigation
-  const urlQuery = searchParams.get('q') ?? ''
-  useEffect(() => {
-    if (query !== urlQuery) setQuery(urlQuery)
-  }, [urlQuery])
+  }
 
   const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
@@ -233,7 +225,6 @@ export function HomePage() {
 
   const handleTabChange = (next: Tab) => {
     setRecipes([])
-    setQuery('')
     setPage(0)
     setHasMore(false)
     setShowFilterPanel(false)
@@ -247,10 +238,21 @@ export function HomePage() {
   }
 
   const handleTagFilter = (filter: TagFilter) => {
-    setQuery('')
     setPage(0)
     setRecipes([])
-    toggleFilter(filter.type, filter.value)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('q')
+      const current = next.getAll(filter.type)
+      next.delete(filter.type)
+      if (current.includes(filter.value)) {
+        for (const v of current) if (v !== filter.value) next.append(filter.type, v)
+      } else {
+        for (const v of current) next.append(filter.type, v)
+        next.append(filter.type, filter.value)
+      }
+      return next
+    })
   }
 
   const handleCreateCollection = async (e: React.FormEvent) => {
@@ -293,7 +295,7 @@ export function HomePage() {
     <>
       <header className="header">
         <span className="logo">🍴 Recipes</span>
-        <SearchBar value={query} onChange={setQuery} disabled={tab !== 'explore'} placeholder={tab !== 'explore' ? 'Search available on Explore' : undefined} />
+        <SearchBar value={query} onChange={handleQueryChange} disabled={tab !== 'explore'} placeholder={tab !== 'explore' ? 'Search available on Explore' : undefined} />
         <button className="btn-add" onClick={() => setShowAddSite((v) => !v)}>+ Add Site</button>
         <button className="btn-settings" onClick={() => setShowSettings(true)} title="Settings">⚙</button>
       </header>
