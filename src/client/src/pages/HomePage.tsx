@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useSearchParams, useNavigate, useMatch, useParams } from 'react-router-dom'
 import { useUrlFilters } from '../hooks/useUrlFilters'
 import {
   addFavorite,
@@ -45,7 +45,14 @@ const FILTER_EMOJI: Record<TagFilterType, string> = {
 
 export function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [tab, setTab] = useState<Tab>('explore')
+  const navigate = useNavigate()
+  const { collectionId: collectionIdParam } = useParams<{ collectionId?: string }>()
+
+  const isFavorites = useMatch('/favorites')
+  const isCollections = useMatch('/collections/*')
+  const isList = useMatch('/list')
+  const tab: Tab = isFavorites ? 'favorites' : isCollections ? 'collections' : isList ? 'list' : 'explore'
+
   const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
   const [recipes, setRecipes] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
@@ -63,21 +70,33 @@ export function HomePage() {
 
   // Collections state
   const [collections, setCollections] = useState<Collection[]>([])
-  const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null)
   const [newCollectionName, setNewCollectionName] = useState('')
   const [creatingCollection, setCreatingCollection] = useState(false)
 
+  const selectedCollection = useMemo(() => {
+    if (collectionIdParam == null) return null
+    const id = Number(collectionIdParam)
+    return collections.find((c) => c.id === id) ?? null
+  }, [collectionIdParam, collections])
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Keep ?q= in sync with the query input so searches are shareable
+  // Keep ?q= in sync with the query input (explore tab only)
   useEffect(() => {
+    if (tab !== 'explore') return
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       if (query) next.set('q', query)
       else next.delete('q')
       return next
     }, { replace: true })
-  }, [query])
+  }, [query, tab])
+
+  // Sync URL query param back to local state for browser back/forward navigation
+  const urlQuery = searchParams.get('q') ?? ''
+  useEffect(() => {
+    if (query !== urlQuery) setQuery(urlQuery)
+  }, [urlQuery])
 
   const refreshStats = useCallback(() => getStats().then(setStats).catch(() => null), [])
 
@@ -125,19 +144,19 @@ export function HomePage() {
     refreshCollections()
   }, [tab])
 
-  // Load collection recipes when a collection is selected
+  // Load collection recipes when a collection is selected (driven by URL)
   useEffect(() => {
-    if (tab !== 'collections' || !selectedCollection) return
+    if (tab !== 'collections' || collectionIdParam == null) return
     setLoading(true)
     setPage(0)
-    listCollectionRecipes(selectedCollection.id, LIMIT, 0)
+    listCollectionRecipes(Number(collectionIdParam), LIMIT, 0)
       .then((results) => {
         setRecipes(results)
         setHasMore(results.length === LIMIT)
       })
       .catch(() => setRecipes([]))
       .finally(() => setLoading(false))
-  }, [tab, selectedCollection])
+  }, [tab, collectionIdParam])
 
   // All-recipes or search when on explore tab
   useEffect(() => {
@@ -182,8 +201,8 @@ export function HomePage() {
     setLoadingMore(true)
     try {
       let results: SearchResult[]
-      if (tab === 'collections' && selectedCollection) {
-        results = await listCollectionRecipes(selectedCollection.id, LIMIT, nextPage * LIMIT)
+      if (tab === 'collections' && collectionIdParam != null) {
+        results = await listCollectionRecipes(Number(collectionIdParam), LIMIT, nextPage * LIMIT)
       } else if (query.trim()) {
         results = await searchRecipes(query, LIMIT, nextPage * LIMIT, activeFilters, minTime, maxTime)
       } else {
@@ -213,22 +232,24 @@ export function HomePage() {
   }
 
   const handleTabChange = (next: Tab) => {
-    setTab(next)
     setRecipes([])
     setQuery('')
     setPage(0)
     setHasMore(false)
-    setSelectedCollection(null)
     setShowFilterPanel(false)
-    clearFilters()
+    const tabPaths: Record<Tab, string> = {
+      explore: '/',
+      favorites: '/favorites',
+      collections: '/collections',
+      list: '/list',
+    }
+    navigate(tabPaths[next])
   }
 
   const handleTagFilter = (filter: TagFilter) => {
-    setTab('explore')
     setQuery('')
     setPage(0)
     setRecipes([])
-    setSelectedCollection(null)
     toggleFilter(filter.type, filter.value)
   }
 
@@ -396,7 +417,7 @@ export function HomePage() {
               <div
                 key={c.id}
                 className="collection-tile"
-                onClick={() => setSelectedCollection(c)}
+                onClick={() => navigate(`/collections/${c.id}`)}
               >
                 <div className="collection-tile-icon">📁</div>
                 <div className="collection-tile-name">{c.name}</div>
@@ -437,7 +458,7 @@ export function HomePage() {
 
       {tab === 'collections' && selectedCollection && (
         <div className="collection-drill-header">
-          <button className="btn-back" onClick={() => setSelectedCollection(null)}>← Back</button>
+          <button className="btn-back" onClick={() => navigate('/collections')}>← Back</button>
           <span className="collection-drill-title">📁 {selectedCollection.name}</span>
         </div>
       )}

@@ -109,7 +109,7 @@ function GroceryRow({ item, onCheck, onDelete }: GroceryRowProps) {
         {item.recipe_ids.map((rid) => {
           const title = item.recipe_titles[String(rid)] ?? `Recipe #${rid}`
           return (
-            <Link key={rid} to={`/recipes/${rid}`} className="grocery-source-chip">
+            <Link key={rid} to={`/recipe/${rid}`} className="grocery-source-chip">
               {title}
             </Link>
           )
